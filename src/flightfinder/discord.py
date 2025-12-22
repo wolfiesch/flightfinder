@@ -12,6 +12,7 @@ import httpx
 
 from flightfinder.models import Flight, RoundTrip, Segment
 from flightfinder.alerts import AlertMatch, PriceAlert
+from flightfinder.hotel_models import Hotel, HotelSearchResults
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ COLOR_SEGMENT = 0x3498DB  # Blue - segment details
 COLOR_LAYOVER = 0xF39C12  # Orange - layover info
 COLOR_SEARCH_HEADER = 0x9B59B6  # Purple - search header
 COLOR_STATUS = 0x7289DA  # Discord blurple - status
+COLOR_HOTEL = 0x1ABC9C  # Teal - hotel
+COLOR_HOTEL_EXCELLENT = 0x2ECC71  # Emerald - 4.5+ rating
+COLOR_HOTEL_GOOD = 0x3498DB  # Blue - 4.0+ rating
+COLOR_TRIP = 0xE91E63  # Pink - combined trip
 
 
 @dataclass
@@ -301,6 +306,92 @@ class DiscordNotifier:
         return self._send_embeds([embed])
 
     # =========================================================================
+    # Hotel Methods
+    # =========================================================================
+
+    def send_hotel(self, hotel: Hotel, search_context: Optional[str] = None) -> bool:
+        """
+        Send a single hotel to Discord with full details.
+
+        Args:
+            hotel: Hotel object to send
+            search_context: Optional context string (e.g., "Hotels in Tokyo")
+        """
+        if not self._can_send():
+            return False
+
+        embeds = [self._build_hotel_embed(hotel, search_context)]
+        return self._send_embeds(embeds)
+
+    def send_hotel_results(
+        self,
+        location: str,
+        hotels: list[Hotel],
+        search_params: Optional[dict] = None,
+    ) -> int:
+        """
+        Send hotel search results to Discord.
+
+        Args:
+            location: Location searched (city name or key)
+            hotels: List of hotels to send
+            search_params: Optional search parameters for the header
+
+        Returns:
+            Number of hotels successfully sent
+        """
+        if not self._can_send():
+            return 0
+
+        # Send search header
+        self._send_embeds([self._build_hotel_search_header_embed(
+            location, len(hotels), search_params
+        )])
+
+        sent_count = 0
+
+        for hotel in hotels:
+            try:
+                if self.send_hotel(hotel, f"Hotels in {location}"):
+                    sent_count += 1
+            except Exception as e:
+                logger.error(f"Error sending hotel to Discord: {e}")
+
+        # Send summary
+        self._send_embeds([{
+            "title": "✅ Hotel Search Complete",
+            "description": f"Sent **{sent_count}** hotel(s) in {location}",
+            "color": COLOR_STATUS,
+            "timestamp": datetime.utcnow().isoformat(),
+        }])
+
+        return sent_count
+
+    def send_trip_summary(
+        self,
+        origin: str,
+        destination: str,
+        flights: list[Flight] | list[RoundTrip],
+        hotels: list[Hotel],
+        nights: int = 1,
+    ) -> bool:
+        """
+        Send a combined trip summary with flights and hotels.
+
+        Args:
+            origin: Flight origin
+            destination: Destination city
+            flights: List of flight options
+            hotels: List of hotel options
+            nights: Number of nights for price calculation
+        """
+        if not self._can_send():
+            return False
+
+        embeds = [self._build_trip_summary_embed(origin, destination, flights, hotels, nights)]
+        return self._send_embeds(embeds)
+
+    # =========================================================================
     # Embed Builders - Ultra Verbose
     # =========================================================================
 
@@ -348,8 +439,8 @@ class DiscordNotifier:
                 "inline": True
             })
 
-        # Booking link
-        if flight.deep_link:
+        # Booking link (only include if it's a full URL)
+        if flight.deep_link and flight.deep_link.startswith("http"):
             fields.append({
                 "name": "🔗 Book Now",
                 "value": f"[Click to Book]({flight.deep_link})",
@@ -494,8 +585,8 @@ class DiscordNotifier:
                 "inline": True
             })
 
-        # Booking link
-        if roundtrip.booking_url:
+        # Booking link (only include if it's a full URL)
+        if roundtrip.booking_url and roundtrip.booking_url.startswith("http"):
             fields.append({
                 "name": "🔗 Book Now",
                 "value": f"[Click to Book]({roundtrip.booking_url})",
@@ -604,9 +695,9 @@ class DiscordNotifier:
                 {"name": "🎯 Stops", "value": flight.stops_label, "inline": True},
             ])
 
-        # Booking link
+        # Booking link (only include if it's a full URL)
         booking_url = flight.booking_url if isinstance(flight, RoundTrip) else flight.deep_link
-        if booking_url:
+        if booking_url and booking_url.startswith("http"):
             fields.append({
                 "name": "🔗 Book Now",
                 "value": f"[**BOOK THIS DEAL**]({booking_url})",

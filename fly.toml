@@ -1,0 +1,37 @@
+# Fly.io configuration for FlightFinder Monitor
+# Deploy with: fly deploy
+# Set secrets with: fly secrets set DISCORD_WEBHOOK_URL="https://..."
+
+app = "flightfinder-monitor"
+primary_region = "sjc"  # San Jose, CA - close to SFO searches
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Check interval in seconds (5 minutes)
+  MONITOR_INTERVAL = "300"
+  # Days from now to start searching
+  MONITOR_DAYS_AHEAD = "30"
+  # Search window in days
+  MONITOR_SEARCH_WINDOW = "14"
+  # Heartbeat message interval (1 hour)
+  MONITOR_HEARTBEAT_INTERVAL = "3600"
+
+# This is a worker process, no HTTP service needed
+# Fly.io will keep the container running continuously
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# Health checks - monitor process should stay running
+# [checks]
+#   [checks.monitor]
+#     type = "machine"
+#     interval = "30s"
+#     timeout = "10s"
+
+# Secrets to set (do NOT commit these values):
+# fly secrets set DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+# fly secrets set FLIGHTFINDER_ALERTS='[{"origin":"SFO","destination":"anywhere","max_price":300}]'

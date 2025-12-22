@@ -47,12 +47,37 @@ class SearchDefaults:
 
 
 @dataclass
+class DiscordConfig:
+    """Discord webhook notification settings."""
+
+    webhook_url: str = ""
+    enabled: bool = True
+    verbose_level: str = "ultra"  # minimal, normal, verbose, ultra
+    send_search_results: bool = True
+    send_deal_alerts: bool = True
+    send_monitoring_status: bool = True
+    rate_limit_delay: float = 0.5
+
+
+@dataclass
+class MonitorConfig:
+    """Background monitoring settings."""
+
+    interval_seconds: int = 300  # 5 minutes
+    days_ahead: int = 30
+    search_window: int = 14
+    heartbeat_interval: int = 3600  # 1 hour
+
+
+@dataclass
 class Config:
     """Main configuration container."""
 
     api: APIConfig = field(default_factory=APIConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     search_defaults: SearchDefaults = field(default_factory=SearchDefaults)
+    discord: DiscordConfig = field(default_factory=DiscordConfig)
+    monitor: MonitorConfig = field(default_factory=MonitorConfig)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Config":
@@ -84,6 +109,20 @@ class Config:
             config.cache.enabled = cache_enabled.lower() in ("true", "1", "yes")
         if cache_ttl := os.getenv("FLIGHTFINDER_CACHE_TTL"):
             config.cache.ttl_seconds = int(cache_ttl)
+
+        # Discord config from env
+        if webhook_url := os.getenv("DISCORD_WEBHOOK_URL"):
+            config.discord.webhook_url = webhook_url
+        if discord_enabled := os.getenv("DISCORD_ENABLED"):
+            config.discord.enabled = discord_enabled.lower() in ("true", "1", "yes")
+        if verbose_level := os.getenv("DISCORD_VERBOSE_LEVEL"):
+            config.discord.verbose_level = verbose_level
+
+        # Monitor config from env
+        if interval := os.getenv("MONITOR_INTERVAL"):
+            config.monitor.interval_seconds = int(interval)
+        if days_ahead := os.getenv("MONITOR_DAYS_AHEAD"):
+            config.monitor.days_ahead = int(days_ahead)
 
         return config
 
@@ -140,6 +179,16 @@ class Config:
             for key, value in search_data.items():
                 if hasattr(config.search_defaults, key):
                     setattr(config.search_defaults, key, value)
+
+        if discord_data := data.get("discord"):
+            for key, value in discord_data.items():
+                if hasattr(config.discord, key):
+                    setattr(config.discord, key, value)
+
+        if monitor_data := data.get("monitor"):
+            for key, value in monitor_data.items():
+                if hasattr(config.monitor, key):
+                    setattr(config.monitor, key, value)
 
         return config
 

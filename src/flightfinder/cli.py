@@ -160,6 +160,11 @@ def cmd_search(args: argparse.Namespace, console: Console) -> int:
                 return 0
 
             _output_flights(flights, args, console)
+
+            # Send to Discord if requested
+            if getattr(args, "discord", False):
+                _send_flights_to_discord(flights, args.origin, args.destination, console)
+
             return 0
 
     except FlightFinderError as e:
@@ -207,6 +212,11 @@ def cmd_roundtrip(args: argparse.Namespace, console: Console) -> int:
                 return 0
 
             _output_roundtrips(roundtrips, args, console)
+
+            # Send to Discord if requested
+            if getattr(args, "discord", False):
+                _send_roundtrips_to_discord(roundtrips, args.origin, args.destination, console)
+
             return 0
 
     except FlightFinderError as e:

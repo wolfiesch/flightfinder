@@ -13,6 +13,8 @@ from rich.console import Console
 from rich.table import Table
 
 from flightfinder.client import FlightFinder
+from flightfinder.config import get_config
+from flightfinder.discord import DiscordNotifier
 from flightfinder.exceptions import FlightFinderError
 
 
@@ -123,6 +125,9 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--output", "-o", type=str, help="Output file path (defaults to stdout)"
+    )
+    parser.add_argument(
+        "--discord", action="store_true", help="Send results to Discord webhook"
     )
 
 

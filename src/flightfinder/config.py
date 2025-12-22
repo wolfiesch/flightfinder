@@ -1,0 +1,200 @@
+"""Configuration management for FlightFinder."""
+
+import json
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+
+@dataclass
+class APIConfig:
+    """API configuration settings."""
+
+    base_url: str = "https://api.skypicker.com/umbrella/v2/graphql"
+    timeout: float = 30.0
+    max_retries: int = 3
+    retry_delay: float = 1.0
+    retry_backoff: float = 2.0
+    user_agent: str = "FlightFinder/0.1.0"
+
+
+@dataclass
+class CacheConfig:
+    """Cache configuration settings."""
+
+    enabled: bool = True
+    ttl_seconds: int = 300  # 5 minutes
+    max_size: int = 100  # Maximum number of cached responses
+
+
+@dataclass
+class SearchDefaults:
+    """Default search parameters."""
+
+    adults: int = 1
+    children: int = 0
+    infants: int = 0
+    cabin_class: str = "ECONOMY"
+    max_stops: int = 2
+    sort_by: str = "PRICE"
+    limit: int = 100
+    currency: str = "usd"
+    locale: str = "en"
+    content_providers: list[str] = field(
+        default_factory=lambda: ["KIWI", "FRESH", "KAYAK"]
+    )
+
+
+@dataclass
+class Config:
+    """Main configuration container."""
+
+    api: APIConfig = field(default_factory=APIConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
+    search_defaults: SearchDefaults = field(default_factory=SearchDefaults)
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "Config":
+        """Load configuration from a JSON file."""
+        path = Path(path)
+        if not path.exists():
+            return cls()
+
+        with open(path) as f:
+            data = json.load(f)
+
+        return cls._from_dict(data)
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        """Load configuration from environment variables."""
+        config = cls()
+
+        # API config from env
+        if url := os.getenv("FLIGHTFINDER_API_URL"):
+            config.api.base_url = url
+        if timeout := os.getenv("FLIGHTFINDER_TIMEOUT"):
+            config.api.timeout = float(timeout)
+        if retries := os.getenv("FLIGHTFINDER_MAX_RETRIES"):
+            config.api.max_retries = int(retries)
+
+        # Cache config from env
+        if cache_enabled := os.getenv("FLIGHTFINDER_CACHE_ENABLED"):
+            config.cache.enabled = cache_enabled.lower() in ("true", "1", "yes")
+        if cache_ttl := os.getenv("FLIGHTFINDER_CACHE_TTL"):
+            config.cache.ttl_seconds = int(cache_ttl)
+
+        return config
+
+    @classmethod
+    def load(cls, config_path: Optional[str | Path] = None) -> "Config":
+        """
+        Load configuration from file or environment.
+
+        Priority:
+        1. Explicit config_path if provided
+        2. FLIGHTFINDER_CONFIG env var
+        3. ~/.flightfinder/config.json
+        4. ./flightfinder.json
+        5. Environment variables
+        6. Defaults
+        """
+        # Check explicit path
+        if config_path:
+            return cls.from_file(config_path)
+
+        # Check env var for config path
+        if env_path := os.getenv("FLIGHTFINDER_CONFIG"):
+            return cls.from_file(env_path)
+
+        # Check standard locations
+        standard_paths = [
+            Path.home() / ".flightfinder" / "config.json",
+            Path("flightfinder.json"),
+        ]
+
+        for path in standard_paths:
+            if path.exists():
+                return cls.from_file(path)
+
+        # Fall back to environment variables
+        return cls.from_env()
+
+    @classmethod
+    def _from_dict(cls, data: dict) -> "Config":
+        """Create config from dictionary."""
+        config = cls()
+
+        if api_data := data.get("api"):
+            for key, value in api_data.items():
+                if hasattr(config.api, key):
+                    setattr(config.api, key, value)
+
+        if cache_data := data.get("cache"):
+            for key, value in cache_data.items():
+                if hasattr(config.cache, key):
+                    setattr(config.cache, key, value)
+
+        if search_data := data.get("search_defaults"):
+            for key, value in search_data.items():
+                if hasattr(config.search_defaults, key):
+                    setattr(config.search_defaults, key, value)
+
+        return config
+
+    def to_dict(self) -> dict:
+        """Convert configuration to dictionary."""
+        return {
+            "api": {
+                "base_url": self.api.base_url,
+                "timeout": self.api.timeout,
+                "max_retries": self.api.max_retries,
+                "retry_delay": self.api.retry_delay,
+                "retry_backoff": self.api.retry_backoff,
+                "user_agent": self.api.user_agent,
+            },
+            "cache": {
+                "enabled": self.cache.enabled,
+                "ttl_seconds": self.cache.ttl_seconds,
+                "max_size": self.cache.max_size,
+            },
+            "search_defaults": {
+                "adults": self.search_defaults.adults,
+                "children": self.search_defaults.children,
+                "infants": self.search_defaults.infants,
+                "cabin_class": self.search_defaults.cabin_class,
+                "max_stops": self.search_defaults.max_stops,
+                "sort_by": self.search_defaults.sort_by,
+                "limit": self.search_defaults.limit,
+                "currency": self.search_defaults.currency,
+                "locale": self.search_defaults.locale,
+                "content_providers": self.search_defaults.content_providers,
+            },
+        }
+
+    def save(self, path: str | Path) -> None:
+        """Save configuration to a JSON file."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+
+# Global default configuration
+_default_config: Optional[Config] = None
+
+
+def get_config() -> Config:
+    """Get the global configuration instance."""
+    global _default_config
+    if _default_config is None:
+        _default_config = Config.load()
+    return _default_config
+
+
+def set_config(config: Config) -> None:
+    """Set the global configuration instance."""
+    global _default_config
+    _default_config = config

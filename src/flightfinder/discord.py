@@ -810,6 +810,246 @@ class DiscordNotifier:
         }
 
     # =========================================================================
+    # Hotel Embed Builders
+    # =========================================================================
+
+    def _build_hotel_embed(
+        self,
+        hotel: Hotel,
+        context: Optional[str] = None,
+    ) -> dict:
+        """Build a detailed hotel embed."""
+        # Rating-based color
+        color = COLOR_HOTEL
+        if hotel.rating:
+            if hotel.rating >= 4.5:
+                color = COLOR_HOTEL_EXCELLENT
+            elif hotel.rating >= 4.0:
+                color = COLOR_HOTEL_GOOD
+
+        # Title with rating stars
+        rating_stars = ""
+        if hotel.rating:
+            full_stars = int(hotel.rating)
+            rating_stars = "⭐" * full_stars
+
+        title = f"🏨 {hotel.name}"
+
+        # Price range
+        price_str = "N/A"
+        if hotel.price_range:
+            price_str = f"${hotel.price_range.minimum:.0f} - ${hotel.price_range.maximum:.0f}/night"
+
+        # Build description
+        desc_parts = []
+        if context:
+            desc_parts.append(f"**{context}**")
+        if hotel.labels:
+            desc_parts.append(" ".join(f"🏷️ {label}" for label in hotel.labels))
+        description = "\n".join(desc_parts) if desc_parts else None
+
+        # Fields
+        fields = [
+            {"name": "💰 Price Range", "value": price_str, "inline": True},
+            {"name": "🏢 Type", "value": hotel.accommodation_type, "inline": True},
+        ]
+
+        if hotel.rating:
+            rating_label = hotel.review_summary.rating_label if hotel.review_summary else ""
+            fields.append({
+                "name": "⭐ Rating",
+                "value": f"{hotel.rating:.1f}/5 ({rating_label})",
+                "inline": True
+            })
+
+        if hotel.review_count:
+            fields.append({
+                "name": "📝 Reviews",
+                "value": f"{hotel.review_count:,}",
+                "inline": True
+            })
+
+        # Tags/mentions
+        if hotel.mentions:
+            tags = ", ".join(hotel.mentions[:5])
+            fields.append({
+                "name": "🏷️ Features",
+                "value": tags,
+                "inline": True
+            })
+
+        # Location (coordinates)
+        if hotel.location:
+            fields.append({
+                "name": "📍 Coordinates",
+                "value": f"{hotel.location.latitude:.4f}, {hotel.location.longitude:.4f}",
+                "inline": True
+            })
+
+        # TripAdvisor link (only include if it's a full URL)
+        if hotel.url and hotel.url.startswith("http"):
+            fields.append({
+                "name": "🔗 View on TripAdvisor",
+                "value": f"[Click to View]({hotel.url})",
+                "inline": True
+            })
+
+        # Hotel key for reference
+        fields.append({
+            "name": "🆔 Hotel Key",
+            "value": f"`{hotel.key}`",
+            "inline": True
+        })
+
+        embed = {
+            "title": title,
+            "color": color,
+            "fields": fields,
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {"text": f"FlightFinder Hotels | {hotel.accommodation_type}"},
+        }
+
+        if description:
+            embed["description"] = description
+
+        # Add thumbnail if image available (only if it's a valid URL)
+        if hotel.image_url and hotel.image_url.startswith("http"):
+            embed["thumbnail"] = {"url": hotel.image_url}
+
+        return embed
+
+    def _build_hotel_search_header_embed(
+        self,
+        location: str,
+        result_count: int,
+        search_params: Optional[dict] = None,
+    ) -> dict:
+        """Build a hotel search header embed."""
+        title = f"🔍 Hotel Search: {location}"
+
+        fields = [
+            {"name": "📍 Location", "value": location, "inline": True},
+            {"name": "📊 Results Found", "value": str(result_count), "inline": True},
+        ]
+
+        if search_params:
+            if "min_price" in search_params:
+                fields.append({"name": "💰 Min Price", "value": f"${search_params['min_price']}", "inline": True})
+            if "max_price" in search_params:
+                fields.append({"name": "💰 Max Price", "value": f"${search_params['max_price']}", "inline": True})
+            if "min_rating" in search_params:
+                fields.append({"name": "⭐ Min Rating", "value": f"{search_params['min_rating']}/5", "inline": True})
+            if "type" in search_params:
+                fields.append({"name": "🏢 Type", "value": search_params['type'], "inline": True})
+
+        return {
+            "title": title,
+            "color": COLOR_HOTEL,
+            "fields": fields,
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {"text": "FlightFinder Hotel Search"},
+        }
+
+    def _build_trip_summary_embed(
+        self,
+        origin: str,
+        destination: str,
+        flights: list[Flight] | list[RoundTrip],
+        hotels: list[Hotel],
+        nights: int = 1,
+    ) -> dict:
+        """Build a combined trip summary embed."""
+        title = f"✈️🏨 Trip Summary: {origin} → {destination}"
+
+        # Calculate best prices
+        flight_prices = []
+        for f in flights:
+            if isinstance(f, RoundTrip):
+                flight_prices.append(f.price)
+            else:
+                flight_prices.append(f.price)
+
+        hotel_prices = []
+        for h in hotels:
+            if h.price_range:
+                hotel_prices.append(h.price_range.minimum)
+
+        min_flight = min(flight_prices) if flight_prices else 0
+        min_hotel = min(hotel_prices) if hotel_prices else 0
+        total_hotel = min_hotel * nights
+        estimated_total = min_flight + total_hotel
+
+        fields = [
+            {"name": "✈️ Flights Found", "value": str(len(flights)), "inline": True},
+            {"name": "🏨 Hotels Found", "value": str(len(hotels)), "inline": True},
+            {"name": "🌙 Nights", "value": str(nights), "inline": True},
+        ]
+
+        if min_flight > 0:
+            fields.append({
+                "name": "✈️ Cheapest Flight",
+                "value": f"${min_flight:.0f}",
+                "inline": True
+            })
+
+        if min_hotel > 0:
+            fields.append({
+                "name": "🏨 Cheapest Hotel/Night",
+                "value": f"${min_hotel:.0f}",
+                "inline": True
+            })
+            fields.append({
+                "name": "🏨 Hotel Total ({} nights)".format(nights),
+                "value": f"${total_hotel:.0f}",
+                "inline": True
+            })
+
+        if estimated_total > 0:
+            fields.append({
+                "name": "💰 Estimated Trip Cost",
+                "value": f"**${estimated_total:.0f}**",
+                "inline": False
+            })
+
+        # Top flight options
+        if flights:
+            top_flights = sorted(flights, key=lambda x: x.price)[:3]
+            flight_lines = []
+            for f in top_flights:
+                if isinstance(f, RoundTrip):
+                    flight_lines.append(f"${f.price:.0f} ({f.trip_days} days)")
+                else:
+                    flight_lines.append(f"${f.price:.0f} ({f.stops_label})")
+            fields.append({
+                "name": "✈️ Top Flight Deals",
+                "value": "\n".join(flight_lines) or "N/A",
+                "inline": True
+            })
+
+        # Top hotel options
+        if hotels:
+            top_hotels = sorted(hotels, key=lambda x: x.min_price or 999999)[:3]
+            hotel_lines = []
+            for h in top_hotels:
+                price_str = f"${h.min_price:.0f}/night" if h.min_price else "N/A"
+                rating_str = f"{h.rating:.1f}⭐" if h.rating else ""
+                hotel_lines.append(f"{price_str} {rating_str} {h.name[:25]}...")
+            fields.append({
+                "name": "🏨 Top Hotel Deals",
+                "value": "\n".join(hotel_lines) or "N/A",
+                "inline": True
+            })
+
+        return {
+            "title": title,
+            "description": f"Combined search results for your trip to {destination}",
+            "color": COLOR_TRIP,
+            "fields": fields,
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {"text": f"FlightFinder Trip Planner | {origin} → {destination}"},
+        }
+
+    # =========================================================================
     # Internal Methods
     # =========================================================================
 
@@ -886,20 +1126,23 @@ class DiscordNotifier:
 # Convenience function for quick notifications
 def send_to_discord(
     webhook_url: str,
-    flight: Flight | RoundTrip | AlertMatch,
+    item: Flight | RoundTrip | AlertMatch | Hotel,
     context: Optional[str] = None,
 ) -> bool:
     """
-    Quick helper to send a single flight/deal to Discord.
+    Quick helper to send a single flight/hotel/deal to Discord.
 
     Usage:
         from flightfinder.discord import send_to_discord
         send_to_discord("https://discord.com/...", flight)
+        send_to_discord("https://discord.com/...", hotel)
     """
     with DiscordNotifier(webhook_url=webhook_url) as notifier:
-        if isinstance(flight, AlertMatch):
-            return notifier.send_deal_alert(flight)
-        elif isinstance(flight, RoundTrip):
-            return notifier.send_roundtrip(flight, context)
+        if isinstance(item, AlertMatch):
+            return notifier.send_deal_alert(item)
+        elif isinstance(item, Hotel):
+            return notifier.send_hotel(item, context)
+        elif isinstance(item, RoundTrip):
+            return notifier.send_roundtrip(item, context)
         else:
-            return notifier.send_flight(flight, context)
+            return notifier.send_flight(item, context)

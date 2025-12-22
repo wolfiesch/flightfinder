@@ -16,6 +16,8 @@ from flightfinder.client import FlightFinder
 from flightfinder.config import get_config
 from flightfinder.discord import DiscordNotifier
 from flightfinder.exceptions import FlightFinderError
+from flightfinder.hotel_client import HotelFinder
+from flightfinder.hotel_models import LOCATION_KEYS
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -82,6 +84,74 @@ def create_parser() -> argparse.ArgumentParser:
 
     # REPL command
     subparsers.add_parser("repl", help="Start interactive REPL mode")
+
+    # Hotels command
+    hotels_parser = subparsers.add_parser("hotels", help="Search for hotels")
+    hotels_parser.add_argument("location", help="City name (e.g., 'New York') or location key (e.g., 'g60763')")
+    hotels_parser.add_argument(
+        "--limit", type=int, default=20, help="Number of results (default: 20)"
+    )
+    hotels_parser.add_argument(
+        "--min-price", type=float, help="Minimum nightly price filter"
+    )
+    hotels_parser.add_argument(
+        "--max-price", type=float, help="Maximum nightly price filter"
+    )
+    hotels_parser.add_argument(
+        "--min-rating", type=float, help="Minimum rating filter (0-5)"
+    )
+    hotels_parser.add_argument(
+        "--type",
+        choices=["Hotel", "Hostel", "Motel", "Resort", "Ryokan", "B&B"],
+        help="Accommodation type filter",
+    )
+    hotels_parser.add_argument(
+        "--format",
+        choices=["table", "json", "csv"],
+        default="table",
+        help="Output format (default: table)",
+    )
+    hotels_parser.add_argument(
+        "--output", "-o", type=str, help="Output file path (defaults to stdout)"
+    )
+    hotels_parser.add_argument(
+        "--discord", action="store_true", help="Send results to Discord webhook"
+    )
+
+    # Hotel locations command (list supported cities)
+    subparsers.add_parser("hotel-locations", help="List supported hotel search locations")
+
+    # Trip command (combined flight + hotel search)
+    trip_parser = subparsers.add_parser("trip", help="Search flights AND hotels together")
+    trip_parser.add_argument("origin", help="Origin airport code (e.g., SFO)")
+    trip_parser.add_argument("destination", help="Destination city (e.g., 'tokyo', 'new york')")
+    trip_parser.add_argument(
+        "--days", type=int, default=30, help="Days from now to depart (default: 30)"
+    )
+    trip_parser.add_argument(
+        "--nights", type=int, default=7, help="Number of nights to stay (default: 7)"
+    )
+    trip_parser.add_argument(
+        "--max-price", type=float, help="Maximum flight price filter"
+    )
+    trip_parser.add_argument(
+        "--max-hotel-price", type=float, help="Maximum hotel price per night"
+    )
+    trip_parser.add_argument(
+        "--max-stops", type=int, default=1, help="Maximum flight stops (default: 1)"
+    )
+    trip_parser.add_argument(
+        "--limit", type=int, default=5, help="Results per category (default: 5)"
+    )
+    trip_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format (default: table)",
+    )
+    trip_parser.add_argument(
+        "--discord", action="store_true", help="Send results to Discord webhook"
+    )
 
     return parser
 
@@ -277,6 +347,8 @@ def cmd_repl(console: Console) -> int:
 [bold]Available commands:[/bold]
   search <origin> [destination]  - Search one-way flights
   roundtrip <origin> [dest]      - Search round-trip flights
+  hotels <city>                  - Search for hotels
+  trip <origin> <dest>           - Search flights + hotels together
   location <query>               - Search for airport codes
   cache                          - Show cache statistics
   clear                          - Clear response cache
@@ -379,6 +451,96 @@ def cmd_repl(console: Console) -> int:
             except FlightFinderError as e:
                 console.print(f"[red]Error: {e}[/red]")
 
+        elif cmd == "hotels" and len(parts) >= 2:
+            location = " ".join(parts[1:])
+            try:
+                with HotelFinder() as hotel_finder:
+                    results = hotel_finder.search_hotels(location, limit=10)
+                    if results.hotels:
+                        table = Table(title=f"Hotels in {location}")
+                        table.add_column("Price", style="green", justify="right")
+                        table.add_column("Name", max_width=30)
+                        table.add_column("Rating", justify="center")
+                        table.add_column("Type")
+
+                        for hotel in results.hotels[:10]:
+                            price_str = f"${hotel.min_price:.0f}" if hotel.min_price else "N/A"
+                            rating_str = f"{hotel.rating:.1f}/5" if hotel.rating else "N/A"
+                            table.add_row(
+                                price_str,
+                                hotel.name[:30],
+                                rating_str,
+                                hotel.accommodation_type,
+                            )
+                        console.print(table)
+                    else:
+                        console.print("[yellow]No hotels found.[/yellow]")
+            except FlightFinderError as e:
+                console.print(f"[red]Error: {e}[/red]")
+
+        elif cmd == "trip" and len(parts) >= 3:
+            origin = parts[1]
+            dest = " ".join(parts[2:])
+            try:
+                console.print(f"[dim]Searching flights {origin} → {dest}...[/dim]")
+                roundtrips = finder.search_roundtrip(
+                    origin=origin,
+                    destination=dest,
+                    departure_from=date.today() + timedelta(days=30),
+                    departure_to=date.today() + timedelta(days=37),
+                    min_days=7,
+                    max_days=10,
+                    limit=5,
+                )
+
+                hotels = []
+                from flightfinder.hotel_models import get_location_key
+                hotel_location = get_location_key(dest)
+                if hotel_location:
+                    console.print(f"[dim]Searching hotels in {dest}...[/dim]")
+                    with HotelFinder() as hotel_finder:
+                        results = hotel_finder.search_hotels(hotel_location, limit=5)
+                        hotels = results.hotels
+
+                if roundtrips:
+                    table = Table(title=f"Flights: {origin} → {dest}")
+                    table.add_column("Price", style="green", justify="right")
+                    table.add_column("Dates")
+                    table.add_column("Days", justify="center")
+
+                    for rt in roundtrips[:5]:
+                        out_date = rt.outbound.departure_time.strftime("%b %d")
+                        in_date = rt.inbound.departure_time.strftime("%b %d")
+                        table.add_row(
+                            f"${rt.price:.0f}",
+                            f"{out_date} - {in_date}",
+                            str(rt.trip_days),
+                        )
+                    console.print(table)
+
+                if hotels:
+                    table = Table(title=f"Hotels in {dest}")
+                    table.add_column("Price", style="green", justify="right")
+                    table.add_column("Name", max_width=25)
+                    table.add_column("Rating", justify="center")
+
+                    for hotel in hotels[:5]:
+                        price_str = f"${hotel.min_price:.0f}" if hotel.min_price else "N/A"
+                        rating_str = f"{hotel.rating:.1f}/5" if hotel.rating else "N/A"
+                        table.add_row(price_str, hotel.name[:25], rating_str)
+                    console.print(table)
+
+                # Summary
+                if roundtrips and hotels:
+                    min_flight = min(rt.price for rt in roundtrips)
+                    min_hotel = min(h.min_price for h in hotels if h.min_price)
+                    if min_hotel:
+                        total = min_flight + (min_hotel * 7)
+                        console.print(f"\n[bold]Estimated 7-night trip: ${total:.0f}[/bold]")
+
+            except FlightFinderError as e:
+                console.print(f"[red]Error: {e}[/red]")
+
         elif cmd == "cache":
             stats = finder.cache_stats()
             if stats:
@@ -395,6 +557,322 @@ def cmd_repl(console: Console) -> int:
 
     finder.close()
     return 0
+
+
+def cmd_hotels(args: argparse.Namespace, console: Console) -> int:
+    """Execute hotel search."""
+    if args.format == "table":
+        console.print(f"\n[bold]Searching hotels in: {args.location}[/bold]\n")
+
+    try:
+        with HotelFinder() as finder:
+            accommodation_types = [args.type] if args.type else None
+            results = finder.search_hotels(
+                location=args.location,
+                limit=args.limit,
+                min_price=args.min_price,
+                max_price=args.max_price,
+                min_rating=args.min_rating,
+                accommodation_types=accommodation_types,
+            )
+
+            if not results.hotels:
+                console.print("[yellow]No hotels found.[/yellow]")
+                return 0
+
+            _output_hotels(results.hotels, args, console)
+
+            if args.format == "table" and results.has_more:
+                console.print(f"\n[dim]Showing {len(results.hotels)} of {results.total_count} total results[/dim]")
+
+            # Send to Discord if requested
+            if getattr(args, "discord", False):
+                _send_hotels_to_discord(results.hotels, args.location, args, console)
+
+            return 0
+
+    except FlightFinderError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return 1
+
+
+def cmd_trip(args: argparse.Namespace, console: Console) -> int:
+    """Execute combined flight + hotel search."""
+    from flightfinder.hotel_models import get_location_key
+
+    departure_from = date.today() + timedelta(days=args.days)
+    departure_to = departure_from + timedelta(days=7)  # 7-day window
+
+    if args.format == "table":
+        console.print(f"\n[bold]Planning trip: {args.origin} → {args.destination}[/bold]")
+        console.print(f"[dim]Depart around {departure_from}, stay {args.nights} nights[/dim]\n")
+
+    # Check if destination is a valid hotel location
+    hotel_location = args.destination if args.destination.startswith("g") else get_location_key(args.destination)
+    if not hotel_location:
+        console.print(f"[yellow]Warning: '{args.destination}' is not a known hotel location.[/yellow]")
+        console.print("[dim]Use 'flights hotel-locations' to see supported cities.[/dim]\n")
+        hotel_location = None
+
+    flights = []
+    hotels = []
+
+    try:
+        # Search flights
+        with FlightFinder() as flight_finder:
+            console.print("[dim]Searching flights...[/dim]")
+            flights = flight_finder.search_roundtrip(
+                origin=args.origin,
+                destination=args.destination,
+                departure_from=departure_from,
+                departure_to=departure_to,
+                min_days=args.nights,
+                max_days=args.nights + 3,  # Allow some flexibility
+                max_stops=args.max_stops,
+                max_price=args.max_price,
+                limit=args.limit,
+            )
+
+        # Search hotels (if location is valid)
+        if hotel_location:
+            with HotelFinder() as hotel_finder:
+                console.print("[dim]Searching hotels...[/dim]")
+                results = hotel_finder.search_hotels(
+                    location=hotel_location,
+                    limit=args.limit,
+                    max_price=args.max_hotel_price,
+                )
+                hotels = results.hotels
+
+        if not flights and not hotels:
+            console.print("[yellow]No results found.[/yellow]")
+            return 0
+
+        # Output results
+        _output_trip(flights, hotels, args, console)
+
+        # Send to Discord if requested
+        if getattr(args, "discord", False):
+            _send_trip_to_discord(args.origin, args.destination, flights, hotels, args.nights, console)
+
+        return 0
+
+    except FlightFinderError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        return 1
+
+
+def _output_trip(flights, hotels, args: argparse.Namespace, console: Console) -> None:
+    """Output trip search results."""
+    if args.format == "json":
+        data = {
+            "origin": args.origin,
+            "destination": args.destination,
+            "nights": args.nights,
+            "flights": [
+                {
+                    "price": f.price,
+                    "dates": f"{f.outbound.departure_time.date()} - {f.inbound.departure_time.date()}",
+                    "trip_days": f.trip_days,
+                    "carriers": f.all_carriers,
+                }
+                for f in flights
+            ],
+            "hotels": [
+                {
+                    "name": h.name,
+                    "type": h.accommodation_type,
+                    "price_range": str(h.price_range) if h.price_range else None,
+                    "rating": h.rating,
+                }
+                for h in hotels
+            ],
+        }
+
+        # Calculate estimated total
+        if flights and hotels:
+            min_flight = min(f.price for f in flights)
+            min_hotel = min(h.min_price for h in hotels if h.min_price)
+            data["estimated_total"] = min_flight + (min_hotel * args.nights) if min_hotel else None
+
+        console.print(json.dumps(data, indent=2))
+        return
+
+    # Table output
+    if flights:
+        table = Table(title=f"✈️ Round-trip Flights: {args.origin} → {args.destination}")
+        table.add_column("Price", style="green", justify="right")
+        table.add_column("Dates")
+        table.add_column("Days", justify="center")
+        table.add_column("Stops", justify="center")
+        table.add_column("Airlines")
+
+        for f in flights[:args.limit]:
+            out_date = f.outbound.departure_time.strftime("%b %d")
+            in_date = f.inbound.departure_time.strftime("%b %d")
+            table.add_row(
+                f"${f.price:.0f}",
+                f"{out_date} - {in_date}",
+                str(f.trip_days),
+                f"{f.outbound.stops}/{f.inbound.stops}",
+                ", ".join(f.all_carriers[:2]),
+            )
+
+        console.print(table)
+        console.print()
+
+    if hotels:
+        table = Table(title=f"🏨 Hotels in {args.destination}")
+        table.add_column("Price/Night", style="green", justify="right")
+        table.add_column("Name", max_width=30)
+        table.add_column("Rating", justify="center")
+        table.add_column("Type")
+
+        for h in hotels[:args.limit]:
+            price_str = f"${h.min_price:.0f}" if h.min_price else "N/A"
+            rating_str = f"{h.rating:.1f}/5" if h.rating else "N/A"
+            table.add_row(
+                price_str,
+                h.name[:30],
+                rating_str,
+                h.accommodation_type,
+            )
+
+        console.print(table)
+        console.print()
+
+    # Trip summary
+    if flights and hotels:
+        min_flight = min(f.price for f in flights)
+        hotel_with_price = [h for h in hotels if h.min_price]
+        if hotel_with_price:
+            min_hotel = min(h.min_price for h in hotel_with_price)
+            total_hotel = min_hotel * args.nights
+            estimated_total = min_flight + total_hotel
+
+            console.print("[bold]💰 Estimated Trip Cost[/bold]")
+            console.print(f"  ✈️ Cheapest flight: ${min_flight:.0f}")
+            console.print(f"  🏨 Cheapest hotel: ${min_hotel:.0f}/night × {args.nights} nights = ${total_hotel:.0f}")
+            console.print(f"  [green bold]Total: ${estimated_total:.0f}[/green bold]")
+
+
+def cmd_hotel_locations(console: Console) -> int:
+    """List supported hotel search locations."""
+    console.print("\n[bold]Supported Hotel Search Locations[/bold]\n")
+
+    # Group by region
+    us_cities = []
+    intl_cities = []
+
+    for city, key in sorted(LOCATION_KEYS.items()):
+        # Simple heuristic: US cities have g3xxxx or g6xxxx keys typically
+        if key.startswith("g6") or key.startswith("g3") or key.startswith("g45") or key.startswith("g28"):
+            us_cities.append((city.title(), key))
+        else:
+            intl_cities.append((city.title(), key))
+
+    table = Table(title="United States")
+    table.add_column("City", style="cyan")
+    table.add_column("Location Key", style="dim")
+
+    for city, key in sorted(us_cities):
+        table.add_row(city, key)
+
+    console.print(table)
+    console.print()
+
+    table = Table(title="International")
+    table.add_column("City", style="cyan")
+    table.add_column("Location Key", style="dim")
+
+    for city, key in sorted(intl_cities):
+        table.add_row(city, key)
+
+    console.print(table)
+    console.print("\n[dim]Use city names directly (e.g., 'flights hotels \"new york\"')[/dim]")
+    console.print("[dim]Or use location keys for unsupported cities from TripAdvisor URLs[/dim]")
+
+    return 0
+
+
+def _output_hotels(hotels, args: argparse.Namespace, console: Console) -> None:
+    """Output hotel results in specified format."""
+    if args.format == "json":
+        data = [
+            {
+                "key": h.key,
+                "name": h.name,
+                "type": h.accommodation_type,
+                "rating": h.rating,
+                "review_count": h.review_count,
+                "min_price": h.min_price,
+                "max_price": h.max_price,
+                "url": h.url,
+                "image_url": h.image_url,
+                "mentions": h.mentions,
+                "labels": h.labels,
+                "latitude": h.location.latitude if h.location else None,
+                "longitude": h.location.longitude if h.location else None,
+            }
+            for h in hotels
+        ]
+        _write_output(json.dumps(data, indent=2), args.output, console)
+
+    elif args.format == "csv":
+        output = _hotels_to_csv(hotels)
+        _write_output(output, args.output, console)
+
+    else:
+        table = Table(title=f"Hotels in {args.location}")
+        table.add_column("Price", style="green", justify="right")
+        table.add_column("Name", style="cyan", max_width=35)
+        table.add_column("Type")
+        table.add_column("Rating", justify="center")
+        table.add_column("Reviews", justify="right")
+        table.add_column("Tags", max_width=25)
+
+        for hotel in hotels:
+            price_str = str(hotel.price_range) if hotel.price_range else "N/A"
+            rating_str = f"{hotel.rating:.1f}/5" if hotel.rating else "N/A"
+            reviews_str = f"{hotel.review_count:,}" if hotel.review_count else ""
+            tags = ", ".join(hotel.mentions[:2] + hotel.labels[:1])
+            if len(hotel.mentions) + len(hotel.labels) > 3:
+                tags += "..."
+
+            table.add_row(
+                price_str,
+                hotel.name,
+                hotel.accommodation_type,
+                rating_str,
+                reviews_str,
+                tags,
+            )
+
+        console.print(table)
+
+
+def _hotels_to_csv(hotels) -> str:
+    """Convert hotels to CSV string."""
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "key", "name", "type", "rating", "review_count",
+        "min_price", "max_price", "url", "mentions"
+    ])
+    for h in hotels:
+        writer.writerow([
+            h.key,
+            h.name,
+            h.accommodation_type,
+            h.rating or "",
+            h.review_count or "",
+            h.min_price or "",
+            h.max_price or "",
+            h.url or "",
+            "|".join(h.mentions),
+        ])
+    return output.getvalue()
 
 
 def _output_flights(flights, args: argparse.Namespace, console: Console) -> None:
@@ -614,6 +1092,105 @@ def _write_output(content: str, output_path: Optional[str], console: Console) ->
         console.print(content)
 
 
+def _send_flights_to_discord(flights, origin: str, destination: str, console: Console) -> None:
+    """Send flight results to Discord webhook."""
+    config = get_config()
+    webhook_url = config.discord.webhook_url
+
+    if not webhook_url:
+        console.print("[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]")
+        return
+
+    console.print(f"\n[bold]Sending {len(flights)} flights to Discord...[/bold]")
+
+    try:
+        with DiscordNotifier(webhook_url=webhook_url) as notifier:
+            sent = notifier.send_search_results(origin, destination, flights)
+            console.print(f"[green]Sent {sent} flights to Discord[/green]")
+    except Exception as e:
+        console.print(f"[red]Error sending to Discord: {e}[/red]")
+
+
+def _send_roundtrips_to_discord(roundtrips, origin: str, destination: str, console: Console) -> None:
+    """Send round-trip results to Discord webhook."""
+    config = get_config()
+    webhook_url = config.discord.webhook_url
+
+    if not webhook_url:
+        console.print("[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]")
+        return
+
+    console.print(f"\n[bold]Sending {len(roundtrips)} round-trips to Discord...[/bold]")
+
+    try:
+        with DiscordNotifier(webhook_url=webhook_url) as notifier:
+            sent = notifier.send_search_results(origin, destination, roundtrips)
+            console.print(f"[green]Sent {sent} round-trips to Discord[/green]")
+    except Exception as e:
+        console.print(f"[red]Error sending to Discord: {e}[/red]")
+
+
+def _send_hotels_to_discord(hotels, location: str, args: argparse.Namespace, console: Console) -> None:
+    """Send hotel results to Discord webhook."""
+    config = get_config()
+    webhook_url = config.discord.webhook_url
+
+    if not webhook_url:
+        console.print("[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]")
+        return
+
+    console.print(f"\n[bold]Sending {len(hotels)} hotels to Discord...[/bold]")
+
+    search_params = {}
+    if hasattr(args, "min_price") and args.min_price:
+        search_params["min_price"] = args.min_price
+    if hasattr(args, "max_price") and args.max_price:
+        search_params["max_price"] = args.max_price
+    if hasattr(args, "min_rating") and args.min_rating:
+        search_params["min_rating"] = args.min_rating
+    if hasattr(args, "type") and args.type:
+        search_params["type"] = args.type
+
+    try:
+        with DiscordNotifier(webhook_url=webhook_url) as notifier:
+            sent = notifier.send_hotel_results(location, hotels, search_params)
+            console.print(f"[green]Sent {sent} hotels to Discord[/green]")
+    except Exception as e:
+        console.print(f"[red]Error sending to Discord: {e}[/red]")
+
+
+def _send_trip_to_discord(origin: str, destination: str, flights, hotels, nights: int, console: Console) -> None:
+    """Send trip summary to Discord webhook."""
+    config = get_config()
+    webhook_url = config.discord.webhook_url
+
+    if not webhook_url:
+        console.print("[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]")
+        return
+
+    console.print(f"\n[bold]Sending trip summary to Discord...[/bold]")
+
+    try:
+        with DiscordNotifier(webhook_url=webhook_url) as notifier:
+            # Send trip summary
+            notifier.send_trip_summary(origin, destination, flights, hotels, nights)
+
+            # Optionally send top flights and hotels
+            if flights:
+                console.print(f"[dim]Sending top {min(3, len(flights))} flights...[/dim]")
+                for f in sorted(flights, key=lambda x: x.price)[:3]:
+                    notifier.send_roundtrip(f, f"Trip: {origin} → {destination}")
+
+            if hotels:
+                console.print(f"[dim]Sending top {min(3, len(hotels))} hotels...[/dim]")
+                for h in sorted(hotels, key=lambda x: x.min_price or 999999)[:3]:
+                    notifier.send_hotel(h, f"Hotels in {destination}")
+
+            console.print(f"[green]Trip summary sent to Discord[/green]")
+    except Exception as e:
+        console.print(f"[red]Error sending to Discord: {e}[/red]")
+
+
 def main():
     """Main entry point for the CLI."""
     parser = create_parser()
@@ -646,6 +1223,12 @@ def main():
         return cmd_location(args, console)
     elif args.command == "repl":
         return cmd_repl(console)
+    elif args.command == "hotels":
+        return cmd_hotels(args, console)
+    elif args.command == "hotel-locations":
+        return cmd_hotel_locations(console)
+    elif args.command == "trip":
+        return cmd_trip(args, console)
     else:
         parser.print_help()
         return 0

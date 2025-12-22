@@ -1,7 +1,7 @@
 [project]
 name = "flightfinder"
-version = "0.2.0"
-description = "Python client for searching flights via Kiwi/Skypicker API"
+version = "0.3.0"
+description = "Python client for searching flights (Kiwi/Skypicker API) and hotels (Xotelo API)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -30,3 +30,6 @@ packages = ["src/flightfinder"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests as integration tests (require network)",
+]

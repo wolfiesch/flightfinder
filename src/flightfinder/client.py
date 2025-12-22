@@ -1,37 +1,84 @@
 """FlightFinder API client for Kiwi/Skypicker GraphQL API."""
 
-import httpx
-from datetime import date, datetime
+import logging
+import time
+from datetime import date, datetime, timedelta
 from typing import Optional
-from flightfinder.models import Location, Flight, Segment, RoundTrip
+
+import httpx
+
+from flightfinder.cache import ResponseCache, get_cache
+from flightfinder.config import Config, get_config
+from flightfinder.exceptions import (
+    APIError,
+    NetworkError,
+    ParseError,
+    RateLimitError,
+    TimeoutError,
+    ValidationError,
+)
+from flightfinder.models import Flight, Location, RoundTrip, Segment
+from flightfinder.queries import ONEWAY_SEARCH_QUERY, PLACES_QUERY, ROUNDTRIP_SEARCH_QUERY
+
+logger = logging.getLogger(__name__)
 
 
 class FlightFinder:
     """Client for searching flights via Kiwi/Skypicker API."""
 
-    API_URL = "https://api.skypicker.com/umbrella/v2/graphql"
-    DEFAULT_HEADERS = {
-        "Content-Type": "application/json",
-        "User-Agent": "FlightFinder/0.1.0",
-    }
+    def __init__(
+        self,
+        config: Optional[Config] = None,
+        cache: Optional[ResponseCache] = None,
+        timeout: Optional[float] = None,
+    ):
+        """
+        Initialize the FlightFinder client.
 
-    def __init__(self, timeout: float = 30.0):
-        self.timeout = timeout
+        Args:
+            config: Optional configuration object. Uses global config if not provided.
+            cache: Optional cache instance. Uses global cache if caching is enabled.
+            timeout: Optional timeout override (deprecated, use config).
+        """
+        self.config = config or get_config()
+        self._cache = cache if cache is not None else (
+            get_cache(
+                max_size=self.config.cache.max_size,
+                default_ttl=self.config.cache.ttl_seconds,
+            )
+            if self.config.cache.enabled
+            else None
+        )
         self._client: Optional[httpx.Client] = None
+
+        # Support legacy timeout parameter
+        if timeout is not None:
+            self.config.api.timeout = timeout
+
+        logger.debug(
+            f"FlightFinder initialized with timeout={self.config.api.timeout}s, "
+            f"cache={'enabled' if self._cache else 'disabled'}"
+        )
 
     @property
     def client(self) -> httpx.Client:
+        """Get or create the HTTP client."""
         if self._client is None:
             self._client = httpx.Client(
-                timeout=self.timeout,
-                headers=self.DEFAULT_HEADERS,
+                timeout=self.config.api.timeout,
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": self.config.api.user_agent,
+                },
             )
         return self._client
 
     def close(self) -> None:
+        """Close the HTTP client."""
         if self._client:
             self._client.close()
             self._client = None
+            logger.debug("FlightFinder client closed")
 
     def __enter__(self):
         return self
@@ -55,46 +102,16 @@ class FlightFinder:
 
         Returns:
             List of matching locations
+
+        Raises:
+            ValidationError: If term is empty
+            APIError: If API returns an error
+            NetworkError: If connection fails
         """
-        query = """
-        query UmbrellaPlacesQuery(
-            $search: PlacesSearchInput
-            $filter: PlacesFilterInput
-            $options: PlacesOptionsInput
-            $first: Int!
-        ) {
-            places(search: $search, filter: $filter, options: $options, first: $first) {
-                __typename
-                ... on AppError {
-                    error: message
-                }
-                ... on PlaceConnection {
-                    edges {
-                        node {
-                            __typename
-                            id
-                            legacyId
-                            name
-                            slug
-                            gps { lat lng }
-                            ... on Station {
-                                type
-                                code
-                                city {
-                                    name
-                                    country { name code }
-                                }
-                            }
-                            ... on City {
-                                code
-                                country { name code }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        """
+        if not term or not term.strip():
+            raise ValidationError("Search term cannot be empty", field="term")
+
+        logger.info(f"Searching locations for: '{term}'")
 
         variables: dict = {
             "search": {"term": term},
@@ -104,52 +121,62 @@ class FlightFinder:
         if location_types:
             variables["filter"] = {"types": location_types}
 
-        response = self._execute_query(query, variables)
+        response = self._execute_query(PLACES_QUERY, variables)
         places_data = response.get("data", {}).get("places", {})
 
         if places_data.get("__typename") == "AppError":
-            raise Exception(f"API Error: {places_data.get('error')}")
+            error_msg = places_data.get("error", "Unknown error")
+            logger.error(f"API error in location search: {error_msg}")
+            raise APIError(f"Location search failed: {error_msg}")
 
         edges = places_data.get("edges", [])
+        logger.debug(f"Found {len(edges)} location results")
 
         locations = []
         for edge in edges:
-            node = edge.get("node", {})
-            gps = node.get("gps", {}) or {}
-            node_type = node.get("__typename", "")
-
-            city_name = None
-            country_name = None
-            country_code = None
-
-            if "city" in node and node["city"]:
-                city_name = node["city"].get("name")
-                if "country" in node["city"] and node["city"]["country"]:
-                    country_name = node["city"]["country"].get("name")
-                    country_code = node["city"]["country"].get("code")
-            elif "country" in node and node["country"]:
-                country_name = node["country"].get("name")
-                country_code = node["country"].get("code")
-
-            # Map __typename to simpler type
-            type_map = {"Station": "AIRPORT", "City": "CITY", "Country": "COUNTRY"}
-            loc_type = node.get("type") or type_map.get(node_type, node_type)
-
-            locations.append(
-                Location(
-                    id=node.get("legacyId") or node.get("id", ""),
-                    name=node.get("name", ""),
-                    slug=node.get("slug", ""),
-                    type=loc_type,
-                    city=city_name,
-                    country=country_name,
-                    country_code=country_code,
-                    latitude=gps.get("lat"),
-                    longitude=gps.get("lng"),
-                )
-            )
+            try:
+                location = self._parse_location(edge.get("node", {}))
+                if location:
+                    locations.append(location)
+            except Exception as e:
+                logger.warning(f"Failed to parse location: {e}")
+                continue
 
         return locations
+
+    def _parse_location(self, node: dict) -> Optional[Location]:
+        """Parse a location node from the API response."""
+        gps = node.get("gps", {}) or {}
+        node_type = node.get("__typename", "")
+
+        city_name = None
+        country_name = None
+        country_code = None
+
+        if "city" in node and node["city"]:
+            city_name = node["city"].get("name")
+            if "country" in node["city"] and node["city"]["country"]:
+                country_name = node["city"]["country"].get("name")
+                country_code = node["city"]["country"].get("code")
+        elif "country" in node and node["country"]:
+            country_name = node["country"].get("name")
+            country_code = node["country"].get("code")
+
+        # Map __typename to simpler type
+        type_map = {"Station": "AIRPORT", "City": "CITY", "Country": "COUNTRY"}
+        loc_type = node.get("type") or type_map.get(node_type, node_type)
+
+        return Location(
+            id=node.get("legacyId") or node.get("id", ""),
+            name=node.get("name", ""),
+            slug=node.get("slug", ""),
+            type=loc_type,
+            city=city_name,
+            country=country_name,
+            country_code=country_code,
+            latitude=gps.get("lat"),
+            longitude=gps.get("lng"),
+        )
 
     def search_flights(
         self,
@@ -159,13 +186,13 @@ class FlightFinder:
         departure_to: Optional[date] = None,
         return_from: Optional[date] = None,
         return_to: Optional[date] = None,
-        adults: int = 1,
-        children: int = 0,
-        infants: int = 0,
-        cabin_class: str = "ECONOMY",
-        max_stops: int = 2,
-        sort_by: str = "PRICE",
-        limit: int = 100,
+        adults: Optional[int] = None,
+        children: Optional[int] = None,
+        infants: Optional[int] = None,
+        cabin_class: Optional[str] = None,
+        max_stops: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        limit: Optional[int] = None,
         max_price: Optional[float] = None,
         min_price: Optional[float] = None,
     ) -> list[Flight]:
@@ -191,56 +218,31 @@ class FlightFinder:
 
         Returns:
             List of Flight objects
-        """
-        query = """
-        query SearchOneWayItinerariesQuery(
-            $search: SearchOnewayInput
-            $filter: ItinerariesFilterInput
-            $options: ItinerariesOptionsInput
-        ) {
-            onewayItineraries(search: $search, filter: $filter, options: $options) {
-                __typename
-                ... on AppError {
-                    error: message
-                }
-                ... on Itineraries {
-                    itineraries {
-                        __typename
-                        ... on ItineraryOneWay {
-                            id
-                            price { amount }
-                            priceEur { amount }
-                            sector {
-                                duration
-                                sectorSegments {
-                                    segment {
-                                        source {
-                                            station { code name }
-                                            localTime
-                                        }
-                                        destination {
-                                            station { code name }
-                                            localTime
-                                        }
-                                        duration
-                                        carrier { code name }
-                                    }
-                                }
-                            }
-                            bookingOptions {
-                                edges {
-                                    node { bookingUrl }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        """
 
-        # Build itinerary specification (matching R package structure)
-        # Note: "anywhere" is passed as a literal ID string, not a special object
+        Raises:
+            ValidationError: If origin is empty
+            APIError: If API returns an error
+            NetworkError: If connection fails
+        """
+        if not origin or not origin.strip():
+            raise ValidationError("Origin cannot be empty", field="origin")
+
+        # Use defaults from config
+        defaults = self.config.search_defaults
+        adults = adults if adults is not None else defaults.adults
+        children = children if children is not None else defaults.children
+        infants = infants if infants is not None else defaults.infants
+        cabin_class = cabin_class or defaults.cabin_class
+        max_stops = max_stops if max_stops is not None else defaults.max_stops
+        sort_by = sort_by or defaults.sort_by
+        limit = limit if limit is not None else defaults.limit
+
+        logger.info(
+            f"Searching flights: {origin} → {destination}, "
+            f"dates: {departure_from} to {departure_to}"
+        )
+
+        # Build itinerary specification
         itinerary: dict = {
             "source": {"ids": [origin]},
             "destination": {"ids": [destination]},
@@ -268,7 +270,7 @@ class FlightFinder:
             "cabinClass": {"cabinClass": cabin_class, "applyMixedClasses": False},
         }
 
-        # Build filter input (matching R package structure)
+        # Build filter input
         filter_input: dict = {
             "allowChangeInboundDestination": True,
             "allowChangeInboundSource": True,
@@ -277,7 +279,7 @@ class FlightFinder:
             "enableThrowAwayTicketing": True,
             "enableTrueHiddenCity": True,
             "transportTypes": ["FLIGHT"],
-            "contentProviders": ["KIWI", "FRESH", "KAYAK"],
+            "contentProviders": defaults.content_providers,
             "flightsApiLimit": limit,
             "limit": limit,
             "maxStopsCount": max_stops,
@@ -294,8 +296,8 @@ class FlightFinder:
         options = {
             "sortBy": sort_by,
             "mergePriceDiffRule": "INCREASED",
-            "currency": "usd",
-            "locale": "en",
+            "currency": defaults.currency,
+            "locale": defaults.locale,
             "partner": "skypicker",
             "affilID": "skypicker",
             "storeSearch": False,
@@ -310,15 +312,18 @@ class FlightFinder:
 
         # Use featureName parameter for flight search
         response = self._execute_query(
-            query, variables, feature_name="SearchOneWayItinerariesQuery"
+            ONEWAY_SEARCH_QUERY, variables, feature_name="SearchOneWayItinerariesQuery"
         )
 
         result = response.get("data", {}).get("onewayItineraries", {})
 
         if result.get("__typename") == "AppError":
-            raise Exception(f"API Error: {result.get('error')}")
+            error_msg = result.get("error", "Unknown error")
+            logger.error(f"API error in flight search: {error_msg}")
+            raise APIError(f"Flight search failed: {error_msg}")
 
         itineraries = result.get("itineraries", [])
+        logger.debug(f"Found {len(itineraries)} flight results")
 
         flights = []
         for itin in itineraries:
@@ -326,9 +331,14 @@ class FlightFinder:
                 flight = self._parse_itinerary(itin)
                 if flight:
                     flights.append(flight)
-            except Exception:
-                continue  # Skip malformed entries
+            except ParseError as e:
+                logger.warning(f"Failed to parse itinerary: {e}")
+                continue
+            except Exception as e:
+                logger.warning(f"Unexpected error parsing itinerary: {e}")
+                continue
 
+        logger.info(f"Successfully parsed {len(flights)} flights")
         return flights
 
     def search_anywhere(
@@ -360,11 +370,11 @@ class FlightFinder:
         return_to: Optional[date] = None,
         min_days: int = 7,
         max_days: int = 21,
-        adults: int = 1,
-        cabin_class: str = "ECONOMY",
-        max_stops: int = 2,
-        sort_by: str = "PRICE",
-        limit: int = 100,
+        adults: Optional[int] = None,
+        cabin_class: Optional[str] = None,
+        max_stops: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        limit: Optional[int] = None,
         max_price: Optional[float] = None,
     ) -> list[RoundTrip]:
         """
@@ -388,82 +398,29 @@ class FlightFinder:
 
         Returns:
             List of RoundTrip objects sorted by price
+
+        Raises:
+            ValidationError: If parameters are invalid
+            APIError: If API returns an error
         """
-        query = """
-        query SearchReturnItinerariesQuery(
-            $search: SearchReturnInput
-            $filter: ItinerariesFilterInput
-            $options: ItinerariesOptionsInput
-        ) {
-            returnItineraries(search: $search, filter: $filter, options: $options) {
-                __typename
-                ... on AppError {
-                    error: message
-                }
-                ... on Itineraries {
-                    itineraries {
-                        __typename
-                        ... on ItineraryReturn {
-                            id
-                            price { amount }
-                            bagsInfo {
-                                includedCheckedBags
-                                checkedBagTiers {
-                                    tierPrice { amount }
-                                }
-                            }
-                            outbound {
-                                duration
-                                sectorSegments {
-                                    segment {
-                                        source {
-                                            station { code name }
-                                            localTime
-                                        }
-                                        destination {
-                                            station {
-                                                code
-                                                name
-                                                city {
-                                                    name
-                                                    country { code name }
-                                                }
-                                            }
-                                            localTime
-                                        }
-                                        duration
-                                        carrier { code name }
-                                    }
-                                }
-                            }
-                            inbound {
-                                duration
-                                sectorSegments {
-                                    segment {
-                                        source {
-                                            station { code name }
-                                            localTime
-                                        }
-                                        destination {
-                                            station { code name }
-                                            localTime
-                                        }
-                                        duration
-                                        carrier { code name }
-                                    }
-                                }
-                            }
-                            bookingOptions {
-                                edges {
-                                    node { bookingUrl }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        """
+        if not origin or not origin.strip():
+            raise ValidationError("Origin cannot be empty", field="origin")
+
+        if min_days < 1:
+            raise ValidationError("min_days must be at least 1", field="min_days")
+
+        if max_days < min_days:
+            raise ValidationError(
+                "max_days must be greater than or equal to min_days", field="max_days"
+            )
+
+        # Use defaults from config
+        defaults = self.config.search_defaults
+        adults = adults if adults is not None else defaults.adults
+        cabin_class = cabin_class or defaults.cabin_class
+        max_stops = max_stops if max_stops is not None else defaults.max_stops
+        sort_by = sort_by or defaults.sort_by
+        limit = limit if limit is not None else defaults.limit
 
         # Default dates if not specified
         if departure_from is None:
@@ -473,9 +430,14 @@ class FlightFinder:
 
         # Calculate return window based on trip duration
         if return_from is None:
-            return_from = departure_from + __import__("datetime").timedelta(days=min_days)
+            return_from = departure_from + timedelta(days=min_days)
         if return_to is None:
-            return_to = departure_to + __import__("datetime").timedelta(days=max_days)
+            return_to = departure_to + timedelta(days=max_days)
+
+        logger.info(
+            f"Searching round-trip: {origin} → {destination}, "
+            f"out: {departure_from}-{departure_to}, return: {return_from}-{return_to}"
+        )
 
         # Build itinerary
         itinerary: dict = {
@@ -513,7 +475,7 @@ class FlightFinder:
             "enableThrowAwayTicketing": True,
             "enableTrueHiddenCity": True,
             "transportTypes": ["FLIGHT"],
-            "contentProviders": ["KIWI", "FRESH", "KAYAK"],
+            "contentProviders": defaults.content_providers,
             "flightsApiLimit": limit,
             "limit": limit,
             "maxStopsCount": max_stops,
@@ -525,8 +487,8 @@ class FlightFinder:
         options = {
             "sortBy": sort_by,
             "mergePriceDiffRule": "INCREASED",
-            "currency": "usd",
-            "locale": "en",
+            "currency": defaults.currency,
+            "locale": defaults.locale,
             "partner": "skypicker",
             "affilID": "skypicker",
             "storeSearch": False,
@@ -540,15 +502,18 @@ class FlightFinder:
         }
 
         response = self._execute_query(
-            query, variables, feature_name="SearchReturnItinerariesQuery"
+            ROUNDTRIP_SEARCH_QUERY, variables, feature_name="SearchReturnItinerariesQuery"
         )
 
         result = response.get("data", {}).get("returnItineraries", {})
 
         if result.get("__typename") == "AppError":
-            raise Exception(f"API Error: {result.get('error')}")
+            error_msg = result.get("error", "Unknown error")
+            logger.error(f"API error in round-trip search: {error_msg}")
+            raise APIError(f"Round-trip search failed: {error_msg}")
 
         itineraries = result.get("itineraries", [])
+        logger.debug(f"Found {len(itineraries)} round-trip results")
 
         roundtrips = []
         for itin in itineraries:
@@ -558,9 +523,14 @@ class FlightFinder:
                     # Filter by trip duration
                     if min_days <= rt.trip_days <= max_days:
                         roundtrips.append(rt)
-            except Exception:
+            except ParseError as e:
+                logger.warning(f"Failed to parse round-trip: {e}")
+                continue
+            except Exception as e:
+                logger.warning(f"Unexpected error parsing round-trip: {e}")
                 continue
 
+        logger.info(f"Successfully parsed {len(roundtrips)} round-trips")
         return roundtrips
 
     def _parse_roundtrip(self, data: dict) -> Optional[RoundTrip]:
@@ -572,15 +542,10 @@ class FlightFinder:
         inbound = self._parse_sector(inbound_data)
 
         if not outbound or not inbound:
-            return None
+            raise ParseError("Missing outbound or inbound sector", raw_data=data)
 
         # Extract price
-        price_data = data.get("price", {}) or {}
-        price_str = price_data.get("amount", "0")
-        try:
-            price = float(price_str)
-        except (ValueError, TypeError):
-            price = 0.0
+        price = self._parse_price(data.get("price", {}))
 
         # Extract checked bag price (first tier = first bag)
         checked_bag_price = None
@@ -591,10 +556,7 @@ class FlightFinder:
             if bag_tiers:
                 tier_price = bag_tiers[0].get("tierPrice", {}).get("amount")
                 if tier_price:
-                    try:
-                        checked_bag_price = float(tier_price)
-                    except (ValueError, TypeError):
-                        pass
+                    checked_bag_price = self._safe_float(tier_price)
 
         # Extract destination country from last outbound segment
         destination_country = None
@@ -651,7 +613,8 @@ class FlightFinder:
             try:
                 departure_dt = datetime.fromisoformat(source_time.replace("Z", "+00:00"))
                 arrival_dt = datetime.fromisoformat(dest_time.replace("Z", "+00:00"))
-            except ValueError:
+            except ValueError as e:
+                logger.debug(f"Failed to parse segment times: {e}")
                 continue
 
             segments.append(
@@ -693,19 +656,100 @@ class FlightFinder:
     def _execute_query(
         self, query: str, variables: dict, feature_name: Optional[str] = None
     ) -> dict:
-        """Execute a GraphQL query and return the response."""
+        """
+        Execute a GraphQL query with retry logic and caching.
+
+        Args:
+            query: GraphQL query string
+            variables: Query variables
+            feature_name: Optional feature name for URL parameter
+
+        Returns:
+            API response as dictionary
+
+        Raises:
+            RateLimitError: If rate limit is exceeded
+            TimeoutError: If request times out
+            NetworkError: If connection fails
+            APIError: If API returns an error
+        """
+        # Check cache first
+        if self._cache:
+            cached = self._cache.get(query, variables)
+            if cached is not None:
+                logger.debug("Returning cached response")
+                return cached
+
         payload = {
             "query": query,
             "variables": variables,
         }
 
-        url = self.API_URL
+        url = self.config.api.base_url
         if feature_name:
             url = f"{url}?featureName={feature_name}"
 
-        response = self.client.post(url, json=payload)
-        response.raise_for_status()
-        return response.json()
+        # Retry logic
+        last_error: Optional[Exception] = None
+        for attempt in range(self.config.api.max_retries):
+            try:
+                logger.debug(f"API request attempt {attempt + 1}/{self.config.api.max_retries}")
+
+                response = self.client.post(url, json=payload)
+
+                # Handle rate limiting
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get("Retry-After", 60))
+                    logger.warning(f"Rate limited. Retry after {retry_after}s")
+                    raise RateLimitError(retry_after=retry_after)
+
+                response.raise_for_status()
+                result = response.json()
+
+                # Cache successful response
+                if self._cache:
+                    self._cache.set(query, variables, result)
+
+                return result
+
+            except httpx.TimeoutException as e:
+                last_error = TimeoutError(f"Request timed out: {e}", original_error=e)
+                logger.warning(f"Timeout on attempt {attempt + 1}: {e}")
+
+            except httpx.ConnectError as e:
+                last_error = NetworkError(f"Connection failed: {e}", original_error=e)
+                logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
+
+            except RateLimitError:
+                raise  # Don't retry rate limits
+
+            except httpx.HTTPStatusError as e:
+                last_error = APIError(
+                    f"HTTP error: {e}",
+                    status_code=e.response.status_code,
+                    response_body=e.response.text,
+                )
+                logger.error(f"HTTP error {e.response.status_code}: {e}")
+                # Don't retry client errors (4xx except 429)
+                if 400 <= e.response.status_code < 500:
+                    raise last_error
+
+            except Exception as e:
+                last_error = NetworkError(f"Unexpected error: {e}", original_error=e)
+                logger.error(f"Unexpected error on attempt {attempt + 1}: {e}")
+
+            # Exponential backoff before retry
+            if attempt < self.config.api.max_retries - 1:
+                delay = self.config.api.retry_delay * (
+                    self.config.api.retry_backoff ** attempt
+                )
+                logger.debug(f"Retrying in {delay:.1f}s...")
+                time.sleep(delay)
+
+        # All retries exhausted
+        if last_error:
+            raise last_error
+        raise NetworkError("Request failed after all retries")
 
     def _parse_itinerary(self, data: dict) -> Optional[Flight]:
         """Parse a raw itinerary response into a Flight object."""
@@ -713,7 +757,7 @@ class FlightFinder:
         segments_data = sector.get("sectorSegments", [])
 
         if not segments_data:
-            return None
+            raise ParseError("No segments in itinerary", raw_data=data)
 
         # Parse segments
         segments = []
@@ -733,7 +777,8 @@ class FlightFinder:
             try:
                 departure_dt = datetime.fromisoformat(source_time.replace("Z", "+00:00"))
                 arrival_dt = datetime.fromisoformat(dest_time.replace("Z", "+00:00"))
-            except ValueError:
+            except ValueError as e:
+                logger.debug(f"Failed to parse segment times: {e}")
                 continue
 
             segments.append(
@@ -752,15 +797,10 @@ class FlightFinder:
             )
 
         if not segments:
-            return None
+            raise ParseError("No valid segments parsed", raw_data=data)
 
-        # Extract price (API returns amount as string)
-        price_data = data.get("price", {}) or {}
-        price_str = price_data.get("amount", "0")
-        try:
-            price = float(price_str)
-        except (ValueError, TypeError):
-            price = 0.0
+        # Extract price
+        price = self._parse_price(data.get("price", {}))
 
         # Extract booking URL
         booking_url = None
@@ -787,3 +827,28 @@ class FlightFinder:
             segments=segments,
             deep_link=booking_url,
         )
+
+    def _parse_price(self, price_data: dict) -> float:
+        """Safely parse a price from API response."""
+        if not price_data:
+            return 0.0
+        return self._safe_float(price_data.get("amount", "0"))
+
+    def _safe_float(self, value) -> float:
+        """Safely convert a value to float."""
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return 0.0
+
+    def cache_stats(self) -> Optional[dict]:
+        """Get cache statistics if caching is enabled."""
+        if self._cache:
+            return self._cache.stats()
+        return None
+
+    def clear_cache(self) -> int:
+        """Clear the response cache. Returns number of entries cleared."""
+        if self._cache:
+            return self._cache.clear()
+        return 0

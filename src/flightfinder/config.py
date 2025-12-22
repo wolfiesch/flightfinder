@@ -220,6 +220,21 @@ class Config:
                 "locale": self.search_defaults.locale,
                 "content_providers": self.search_defaults.content_providers,
             },
+            "discord": {
+                "webhook_url": self.discord.webhook_url,
+                "enabled": self.discord.enabled,
+                "verbose_level": self.discord.verbose_level,
+                "send_search_results": self.discord.send_search_results,
+                "send_deal_alerts": self.discord.send_deal_alerts,
+                "send_monitoring_status": self.discord.send_monitoring_status,
+                "rate_limit_delay": self.discord.rate_limit_delay,
+            },
+            "monitor": {
+                "interval_seconds": self.monitor.interval_seconds,
+                "days_ahead": self.monitor.days_ahead,
+                "search_window": self.monitor.search_window,
+                "heartbeat_interval": self.monitor.heartbeat_interval,
+            },
         }
 
     def save(self, path: str | Path) -> None:

@@ -3,7 +3,7 @@
 import httpx
 from datetime import date, datetime
 from typing import Optional
-from flightfinder.models import Location, Flight, Segment
+from flightfinder.models import Location, Flight, Segment, RoundTrip
 
 
 class FlightFinder:
@@ -348,6 +348,346 @@ class FlightFinder:
             departure_from=departure_from,
             departure_to=departure_to,
             **kwargs,
+        )
+
+    def search_roundtrip(
+        self,
+        origin: str,
+        destination: str = "anywhere",
+        departure_from: Optional[date] = None,
+        departure_to: Optional[date] = None,
+        return_from: Optional[date] = None,
+        return_to: Optional[date] = None,
+        min_days: int = 7,
+        max_days: int = 21,
+        adults: int = 1,
+        cabin_class: str = "ECONOMY",
+        max_stops: int = 2,
+        sort_by: str = "PRICE",
+        limit: int = 100,
+        max_price: Optional[float] = None,
+    ) -> list[RoundTrip]:
+        """
+        Search for round-trip flights.
+
+        Args:
+            origin: Origin airport code (e.g., "SFO")
+            destination: Destination or "anywhere"
+            departure_from: Earliest outbound departure date
+            departure_to: Latest outbound departure date
+            return_from: Earliest return date (if None, calculated from min_days)
+            return_to: Latest return date (if None, calculated from max_days)
+            min_days: Minimum trip duration in days
+            max_days: Maximum trip duration in days
+            adults: Number of passengers
+            cabin_class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST
+            max_stops: Maximum stops per leg
+            sort_by: PRICE, QUALITY, DURATION
+            limit: Maximum results
+            max_price: Maximum total price filter
+
+        Returns:
+            List of RoundTrip objects sorted by price
+        """
+        query = """
+        query SearchReturnItinerariesQuery(
+            $search: SearchReturnInput
+            $filter: ItinerariesFilterInput
+            $options: ItinerariesOptionsInput
+        ) {
+            returnItineraries(search: $search, filter: $filter, options: $options) {
+                __typename
+                ... on AppError {
+                    error: message
+                }
+                ... on Itineraries {
+                    itineraries {
+                        __typename
+                        ... on ItineraryReturn {
+                            id
+                            price { amount }
+                            bagsInfo {
+                                includedCheckedBags
+                                checkedBagTiers {
+                                    tierPrice { amount }
+                                }
+                            }
+                            outbound {
+                                duration
+                                sectorSegments {
+                                    segment {
+                                        source {
+                                            station { code name }
+                                            localTime
+                                        }
+                                        destination {
+                                            station {
+                                                code
+                                                name
+                                                city {
+                                                    name
+                                                    country { code name }
+                                                }
+                                            }
+                                            localTime
+                                        }
+                                        duration
+                                        carrier { code name }
+                                    }
+                                }
+                            }
+                            inbound {
+                                duration
+                                sectorSegments {
+                                    segment {
+                                        source {
+                                            station { code name }
+                                            localTime
+                                        }
+                                        destination {
+                                            station { code name }
+                                            localTime
+                                        }
+                                        duration
+                                        carrier { code name }
+                                    }
+                                }
+                            }
+                            bookingOptions {
+                                edges {
+                                    node { bookingUrl }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        """
+
+        # Default dates if not specified
+        if departure_from is None:
+            departure_from = date.today()
+        if departure_to is None:
+            departure_to = departure_from
+
+        # Calculate return window based on trip duration
+        if return_from is None:
+            return_from = departure_from + __import__("datetime").timedelta(days=min_days)
+        if return_to is None:
+            return_to = departure_to + __import__("datetime").timedelta(days=max_days)
+
+        # Build itinerary
+        itinerary: dict = {
+            "source": {"ids": [origin]},
+            "destination": {"ids": [destination]},
+            "outboundDepartureDate": {
+                "start": f"{departure_from.isoformat()}T00:00:00",
+                "end": f"{departure_to.isoformat()}T23:59:59",
+            },
+            "inboundDepartureDate": {
+                "start": f"{return_from.isoformat()}T00:00:00",
+                "end": f"{return_to.isoformat()}T23:59:59",
+            },
+        }
+
+        search = {
+            "itinerary": itinerary,
+            "passengers": {
+                "adults": adults,
+                "children": 0,
+                "infants": 0,
+                "adultsHoldBags": 0,
+                "adultsHandBags": 0,
+                "childrenHoldBags": [],
+                "childrenHandBags": [],
+            },
+            "cabinClass": {"cabinClass": cabin_class, "applyMixedClasses": False},
+        }
+
+        filter_input: dict = {
+            "allowChangeInboundDestination": True,
+            "allowChangeInboundSource": True,
+            "allowDifferentStationConnection": True,
+            "enableSelfTransfer": True,
+            "enableThrowAwayTicketing": True,
+            "enableTrueHiddenCity": True,
+            "transportTypes": ["FLIGHT"],
+            "contentProviders": ["KIWI", "FRESH", "KAYAK"],
+            "flightsApiLimit": limit,
+            "limit": limit,
+            "maxStopsCount": max_stops,
+        }
+
+        if max_price is not None:
+            filter_input["price"] = {"end": max_price}
+
+        options = {
+            "sortBy": sort_by,
+            "mergePriceDiffRule": "INCREASED",
+            "currency": "usd",
+            "locale": "en",
+            "partner": "skypicker",
+            "affilID": "skypicker",
+            "storeSearch": False,
+            "searchStrategy": "REDUCED",
+        }
+
+        variables = {
+            "search": search,
+            "filter": filter_input,
+            "options": options,
+        }
+
+        response = self._execute_query(
+            query, variables, feature_name="SearchReturnItinerariesQuery"
+        )
+
+        result = response.get("data", {}).get("returnItineraries", {})
+
+        if result.get("__typename") == "AppError":
+            raise Exception(f"API Error: {result.get('error')}")
+
+        itineraries = result.get("itineraries", [])
+
+        roundtrips = []
+        for itin in itineraries:
+            try:
+                rt = self._parse_roundtrip(itin)
+                if rt:
+                    # Filter by trip duration
+                    if min_days <= rt.trip_days <= max_days:
+                        roundtrips.append(rt)
+            except Exception:
+                continue
+
+        return roundtrips
+
+    def _parse_roundtrip(self, data: dict) -> Optional[RoundTrip]:
+        """Parse a round-trip itinerary response."""
+        outbound_data = data.get("outbound", {})
+        inbound_data = data.get("inbound", {})
+
+        outbound = self._parse_sector(outbound_data)
+        inbound = self._parse_sector(inbound_data)
+
+        if not outbound or not inbound:
+            return None
+
+        # Extract price
+        price_data = data.get("price", {}) or {}
+        price_str = price_data.get("amount", "0")
+        try:
+            price = float(price_str)
+        except (ValueError, TypeError):
+            price = 0.0
+
+        # Extract checked bag price (first tier = first bag)
+        checked_bag_price = None
+        bags_info = data.get("bagsInfo", {}) or {}
+        included_bags = bags_info.get("includedCheckedBags", 0)
+        if included_bags == 0:
+            bag_tiers = bags_info.get("checkedBagTiers", [])
+            if bag_tiers:
+                tier_price = bag_tiers[0].get("tierPrice", {}).get("amount")
+                if tier_price:
+                    try:
+                        checked_bag_price = float(tier_price)
+                    except (ValueError, TypeError):
+                        pass
+
+        # Extract destination country from last outbound segment
+        destination_country = None
+        destination_city = None
+        outbound_segments = outbound_data.get("sectorSegments", [])
+        if outbound_segments:
+            last_segment = outbound_segments[-1].get("segment", {})
+            dest_station = last_segment.get("destination", {}).get("station", {})
+            city_info = dest_station.get("city", {})
+            if city_info:
+                destination_city = city_info.get("name")
+                country_info = city_info.get("country", {})
+                if country_info:
+                    destination_country = country_info.get("code")
+
+        # Extract booking URL
+        booking_url = None
+        booking_options = data.get("bookingOptions", {}).get("edges", [])
+        if booking_options:
+            booking_url = booking_options[0].get("node", {}).get("bookingUrl")
+
+        return RoundTrip(
+            id=data.get("id", ""),
+            price=price,
+            currency="USD",
+            outbound=outbound,
+            inbound=inbound,
+            booking_url=booking_url,
+            checked_bag_price=checked_bag_price,
+            destination_country=destination_country,
+            destination_city=destination_city,
+        )
+
+    def _parse_sector(self, sector_data: dict) -> Optional[Flight]:
+        """Parse a sector (outbound or inbound) into a Flight object."""
+        segments_data = sector_data.get("sectorSegments", [])
+
+        if not segments_data:
+            return None
+
+        segments = []
+        for seg_wrapper in segments_data:
+            seg = seg_wrapper.get("segment", {})
+            source = seg.get("source", {})
+            dest = seg.get("destination", {})
+            carrier = seg.get("carrier", {}) or {}
+
+            source_station = source.get("station", {}) or {}
+            dest_station = dest.get("station", {}) or {}
+
+            source_time = source.get("localTime", "")
+            dest_time = dest.get("localTime", "")
+
+            try:
+                departure_dt = datetime.fromisoformat(source_time.replace("Z", "+00:00"))
+                arrival_dt = datetime.fromisoformat(dest_time.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+
+            segments.append(
+                Segment(
+                    carrier=carrier.get("code", ""),
+                    carrier_name=carrier.get("name"),
+                    departure_time=departure_dt,
+                    arrival_time=arrival_dt,
+                    origin=source_station.get("code", ""),
+                    origin_name=source_station.get("name"),
+                    destination=dest_station.get("code", ""),
+                    destination_name=dest_station.get("name"),
+                    duration_minutes=(seg.get("duration") or 0) // 60,
+                    cabin_class=seg.get("cabinClass"),
+                )
+            )
+
+        if not segments:
+            return None
+
+        first_seg = segments[0]
+        last_seg = segments[-1]
+
+        return Flight(
+            id="",
+            price=0,  # Price is at RoundTrip level
+            currency="USD",
+            departure_time=first_seg.departure_time,
+            arrival_time=last_seg.arrival_time,
+            origin=first_seg.origin,
+            origin_city=first_seg.origin_name,
+            destination=last_seg.destination,
+            destination_city=last_seg.destination_name,
+            duration_minutes=(sector_data.get("duration") or 0) // 60,
+            stops=len(segments) - 1,
+            segments=segments,
         )
 
     def _execute_query(

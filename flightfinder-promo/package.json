@@ -1,0 +1,31 @@
+{
+  "name": "flightfinder-promo",
+  "version": "1.0.0",
+  "description": "60-second promo video for FlightFinder skill",
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "render": "remotion render FlightFinderPromo out/promo.mp4",
+    "render:gif": "remotion render FlightFinderPromo out/promo.gif"
+  },
+  "sideEffects": [
+    "*.css"
+  ],
+  "dependencies": {
+    "@remotion/bundler": "^4.0.409",
+    "@remotion/cli": "^4.0.409",
+    "@remotion/transitions": "^4.0.409",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "remotion": "^4.0.409"
+  },
+  "devDependencies": {
+    "@remotion/tailwind": "^4.0.409",
+    "@types/react": "^19.2.9",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.23",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3"
+  }
+}

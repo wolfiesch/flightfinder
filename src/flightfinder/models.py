@@ -1,7 +1,7 @@
 """Data models for flight search results."""
 
 from datetime import datetime
-from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -12,11 +12,11 @@ class Location(BaseModel):
     name: str
     slug: str
     type: str  # AIRPORT, CITY, COUNTRY, etc.
-    city: Optional[str] = None
-    country: Optional[str] = None
-    country_code: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    city: str | None = None
+    country: str | None = None
+    country_code: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
     def __str__(self) -> str:
         if self.type == "AIRPORT":
@@ -28,16 +28,16 @@ class Segment(BaseModel):
     """A single flight segment within an itinerary."""
 
     carrier: str
-    carrier_name: Optional[str] = None
-    flight_number: Optional[str] = None
+    carrier_name: str | None = None
+    flight_number: str | None = None
     departure_time: datetime
     arrival_time: datetime
     origin: str
-    origin_name: Optional[str] = None
+    origin_name: str | None = None
     destination: str
-    destination_name: Optional[str] = None
+    destination_name: str | None = None
     duration_minutes: int
-    cabin_class: Optional[str] = None
+    cabin_class: str | None = None
 
 
 class Flight(BaseModel):
@@ -49,13 +49,13 @@ class Flight(BaseModel):
     departure_time: datetime
     arrival_time: datetime
     origin: str
-    origin_city: Optional[str] = None
+    origin_city: str | None = None
     destination: str
-    destination_city: Optional[str] = None
+    destination_city: str | None = None
     duration_minutes: int
     stops: int = 0
     segments: list[Segment] = Field(default_factory=list)
-    deep_link: Optional[str] = None
+    deep_link: str | None = None
 
     @property
     def duration_formatted(self) -> str:
@@ -150,8 +150,8 @@ class Itinerary(BaseModel):
     price: float
     currency: str = "USD"
     outbound: Flight
-    inbound: Optional[Flight] = None
-    booking_url: Optional[str] = None
+    inbound: Flight | None = None
+    booking_url: str | None = None
 
     @property
     def is_round_trip(self) -> bool:
@@ -170,10 +170,10 @@ class RoundTrip(BaseModel):
     currency: str = "USD"
     outbound: Flight
     inbound: Flight
-    booking_url: Optional[str] = None
-    checked_bag_price: Optional[float] = None
-    destination_country: Optional[str] = None  # Country code (e.g., "US", "CA", "MX")
-    destination_city: Optional[str] = None
+    booking_url: str | None = None
+    checked_bag_price: float | None = None
+    destination_country: str | None = None  # Country code (e.g., "US", "CA", "MX")
+    destination_city: str | None = None
 
     @property
     def price_with_bag(self) -> float:

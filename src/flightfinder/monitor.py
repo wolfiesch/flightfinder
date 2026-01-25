@@ -28,10 +28,9 @@ import signal
 import sys
 import time
 from datetime import datetime, timedelta
-from typing import Optional
 
 from flightfinder.alerts import AlertMatch, DealAlertManager, PriceAlert
-from flightfinder.config import Config, get_config
+from flightfinder.config import get_config
 from flightfinder.discord import DiscordNotifier
 
 # Configure logging
@@ -52,7 +51,7 @@ class FlightMonitor:
 
     def __init__(
         self,
-        webhook_url: Optional[str] = None,
+        webhook_url: str | None = None,
         interval_seconds: int = 300,
         days_ahead: int = 30,
         search_window: int = 14,
@@ -76,8 +75,8 @@ class FlightMonitor:
 
         self._running = False
         self._last_heartbeat = datetime.min
-        self._alert_manager: Optional[DealAlertManager] = None
-        self._notifier: Optional[DiscordNotifier] = None
+        self._alert_manager: DealAlertManager | None = None
+        self._notifier: DiscordNotifier | None = None
 
         # Load alerts from environment or config
         self._load_alerts_from_env()
@@ -176,7 +175,7 @@ class FlightMonitor:
         if not self.alert_manager.alerts:
             logger.warning("No alerts configured. Set FLIGHTFINDER_ALERTS env var or add alerts to ~/.flightfinder/alerts.json")
 
-        logger.info(f"Starting FlightFinder monitor...")
+        logger.info("Starting FlightFinder monitor...")
         logger.info(f"  Webhook: {self.webhook_url[:50]}...")
         logger.info(f"  Interval: {self.interval_seconds}s")
         logger.info(f"  Alerts: {len(self.alert_manager.alerts)}")

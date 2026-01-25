@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "flightfinder": {
+      "command": "python",
+      "args": ["-m", "flightfinder.mcp_server"],
+      "description": "Search flights (Kiwi/Skypicker) and hotels (Xotelo) for trip planning"
+    }
+  }
+}

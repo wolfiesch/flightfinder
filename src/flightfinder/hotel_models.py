@@ -1,7 +1,7 @@
 """Data models for hotel search results."""
 
 from datetime import date
-from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -54,43 +54,43 @@ class Hotel(BaseModel):
     key: str = Field(description="Unique hotel key (e.g., 'g60763-d23448880')")
     name: str
     accommodation_type: str = Field(description="Hotel, Hostel, Ryokan, etc.")
-    url: Optional[str] = None
-    review_summary: Optional[HotelReviewSummary] = None
-    price_range: Optional[HotelPriceRange] = None
-    location: Optional[HotelLocation] = None
-    image_url: Optional[str] = None
+    url: str | None = None
+    review_summary: HotelReviewSummary | None = None
+    price_range: HotelPriceRange | None = None
+    location: HotelLocation | None = None
+    image_url: str | None = None
     mentions: list[str] = Field(default_factory=list, description="Tags like 'Modern', 'Business'")
     labels: list[str] = Field(default_factory=list, description="Badges like 'Best seller'")
 
     @property
-    def rating(self) -> Optional[float]:
+    def rating(self) -> float | None:
         """Shortcut to review rating."""
         return self.review_summary.rating if self.review_summary else None
 
     @property
-    def review_count(self) -> Optional[int]:
+    def review_count(self) -> int | None:
         """Shortcut to review count."""
         return self.review_summary.count if self.review_summary else None
 
     @property
-    def min_price(self) -> Optional[float]:
+    def min_price(self) -> float | None:
         """Shortcut to minimum nightly price."""
         return self.price_range.minimum if self.price_range else None
 
     @property
-    def max_price(self) -> Optional[float]:
+    def max_price(self) -> float | None:
         """Shortcut to maximum nightly price."""
         return self.price_range.maximum if self.price_range else None
 
     @property
-    def tripadvisor_id(self) -> Optional[str]:
+    def tripadvisor_id(self) -> str | None:
         """Extract TripAdvisor hotel ID from the key."""
         if "-d" in self.key:
             return self.key.split("-d")[1]
         return None
 
     @property
-    def location_id(self) -> Optional[str]:
+    def location_id(self) -> str | None:
         """Extract location ID from the key."""
         if self.key.startswith("g"):
             return self.key.split("-")[0]
@@ -108,9 +108,9 @@ class HotelRate(BaseModel):
     provider: str = Field(description="OTA name like 'Booking.com', 'Expedia'")
     price: float
     currency: str = "USD"
-    room_type: Optional[str] = None
-    is_refundable: Optional[bool] = None
-    url: Optional[str] = None
+    room_type: str | None = None
+    is_refundable: bool | None = None
+    url: str | None = None
 
     def __str__(self) -> str:
         return f"${self.price:.0f} via {self.provider}"
@@ -131,20 +131,20 @@ class HotelRates(BaseModel):
         return (self.check_out - self.check_in).days
 
     @property
-    def cheapest(self) -> Optional[HotelRate]:
+    def cheapest(self) -> HotelRate | None:
         """Get the cheapest rate."""
         if not self.rates:
             return None
         return min(self.rates, key=lambda r: r.price)
 
     @property
-    def cheapest_price(self) -> Optional[float]:
+    def cheapest_price(self) -> float | None:
         """Get the cheapest price."""
         rate = self.cheapest
         return rate.price if rate else None
 
     @property
-    def price_per_night(self) -> Optional[float]:
+    def price_per_night(self) -> float | None:
         """Cheapest price per night."""
         if self.cheapest_price and self.nights > 0:
             return self.cheapest_price / self.nights
@@ -247,7 +247,7 @@ LOCATION_KEYS = {
 }
 
 
-def get_location_key(city: str) -> Optional[str]:
+def get_location_key(city: str) -> str | None:
     """
     Get a TripAdvisor location key for a city name.
 
@@ -260,7 +260,7 @@ def get_location_key(city: str) -> Optional[str]:
     return LOCATION_KEYS.get(city.lower().strip())
 
 
-def parse_location_key_from_url(url: str) -> Optional[str]:
+def parse_location_key_from_url(url: str) -> str | None:
     """
     Extract a location key from a TripAdvisor Hotels URL.
 

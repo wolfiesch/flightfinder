@@ -7,7 +7,6 @@ import logging
 import sys
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Optional
 
 from rich.console import Console
 from rich.table import Table
@@ -120,6 +119,9 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Hotel locations command (list supported cities)
     subparsers.add_parser("hotel-locations", help="List supported hotel search locations")
+
+    # MCP server command
+    subparsers.add_parser("mcp-server", help="Start MCP server for AI agent integration")
 
     # Trip command (combined flight + hotel search)
     trip_parser = subparsers.add_parser("trip", help="Search flights AND hotels together")
@@ -1083,7 +1085,7 @@ def _roundtrips_to_csv(roundtrips) -> str:
     return output.getvalue()
 
 
-def _write_output(content: str, output_path: Optional[str], console: Console) -> None:
+def _write_output(content: str, output_path: str | None, console: Console) -> None:
     """Write content to file or stdout."""
     if output_path:
         Path(output_path).write_text(content)
@@ -1168,7 +1170,7 @@ def _send_trip_to_discord(origin: str, destination: str, flights, hotels, nights
         console.print("[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]")
         return
 
-    console.print(f"\n[bold]Sending trip summary to Discord...[/bold]")
+    console.print("\n[bold]Sending trip summary to Discord...[/bold]")
 
     try:
         with DiscordNotifier(webhook_url=webhook_url) as notifier:
@@ -1186,7 +1188,7 @@ def _send_trip_to_discord(origin: str, destination: str, flights, hotels, nights
                 for h in sorted(hotels, key=lambda x: x.min_price or 999999)[:3]:
                     notifier.send_hotel(h, f"Hotels in {destination}")
 
-            console.print(f"[green]Trip summary sent to Discord[/green]")
+            console.print("[green]Trip summary sent to Discord[/green]")
     except Exception as e:
         console.print(f"[red]Error sending to Discord: {e}[/red]")
 
@@ -1229,9 +1231,28 @@ def main():
         return cmd_hotel_locations(console)
     elif args.command == "trip":
         return cmd_trip(args, console)
+    elif args.command == "mcp-server":
+        return cmd_mcp_server(console)
     else:
         parser.print_help()
         return 0
+
+
+def cmd_mcp_server(console: Console) -> int:
+    """Start the MCP server for AI agent integration."""
+    try:
+        import asyncio
+
+        from flightfinder.mcp_server import main as mcp_main
+        asyncio.run(mcp_main())
+        return 0
+    except ImportError:
+        console.print("[red]Error: MCP support requires the 'mcp' package.[/red]")
+        console.print("[dim]Install with: pip install flightfinder[mcp][/dim]")
+        return 1
+    except Exception as e:
+        console.print(f"[red]Error starting MCP server: {e}[/red]")
+        return 1
 
 
 if __name__ == "__main__":

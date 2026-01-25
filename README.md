@@ -1,28 +1,71 @@
 # FlightFinder
 
-A Python client for searching flights via the Kiwi/Skypicker GraphQL API. No API key required.
+[![CI](https://github.com/wolfgangschoenberger/flightfinder/actions/workflows/ci.yml/badge.svg)](https://github.com/wolfgangschoenberger/flightfinder/actions/workflows/ci.yml)
+[![PyPI version](https://badge.fury.io/py/flightfinder.svg)](https://badge.fury.io/py/flightfinder)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A Python client for searching flights and hotels. No API keys required.
+
+- **Flights**: Kiwi/Skypicker GraphQL API
+- **Hotels**: Xotelo API (TripAdvisor data)
 
 ## Features
 
-- **One-way and round-trip flight search**
-- **"Anywhere" destination search** - find the cheapest flights to any destination
-- **Location search** - find airport codes by name
-- **Async support** - concurrent searches with `AsyncFlightFinder`
-- **Response caching** - reduce API calls with automatic caching
-- **Retry logic** - exponential backoff for transient failures
-- **Rate limit handling** - graceful handling of API rate limits
-- **Deal alerts** - set price alerts for routes you're watching
-- **Multiple output formats** - table, JSON, CSV export
-- **Interactive REPL** - explore flights interactively
+- **Flight Search**
+  - One-way and round-trip search
+  - "Anywhere" destination search - find the cheapest flights to any destination
+  - Location/airport code lookup
+  - Async support with `AsyncFlightFinder`
+
+- **Hotel Search**
+  - Search hotels in 30+ major cities worldwide
+  - Filter by price, rating, accommodation type
+  - Price ranges and review summaries
+
+- **Combined Trip Planning**
+  - Search flights and hotels together
+  - Estimated trip cost calculation
+
+- **AI Agent Integration**
+  - MCP server for Claude and other AI agents
+  - CLI skill for Vercel AI SDK agents
+
+- **Notifications**
+  - Discord webhook integration
+  - Background monitoring service
+
+- **Developer Features**
+  - Response caching with configurable TTL
+  - Retry logic with exponential backoff
+  - Rate limit handling
+  - Multiple output formats (table, JSON, CSV)
+  - Interactive REPL mode
 
 ## Installation
 
 ```bash
+# Install from PyPI
+pip install flightfinder
+
+# Or with MCP server support
+pip install flightfinder[mcp]
+
+# Or install all extras
+pip install flightfinder[all]
+```
+
+### Development Installation
+
+```bash
 # Clone the repository
-git clone https://github.com/yourusername/flightfinder.git
+git clone https://github.com/wolfgangschoenberger/flightfinder.git
 cd flightfinder
 
-# Create virtual environment and install
+# Using uv (recommended)
+uv sync
+
+# Or using pip
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
@@ -352,6 +395,173 @@ flightfinder/
 └── pyproject.toml       # Project configuration
 ```
 
+## Hotel Search
+
+### Python API
+
+```python
+from flightfinder import HotelFinder
+
+with HotelFinder() as finder:
+    # Search hotels in a city
+    results = finder.search_hotels(
+        location="new york",  # or "tokyo", "paris", etc.
+        limit=20,
+        min_price=100,
+        max_price=300,
+        min_rating=4.0,
+    )
+
+    for hotel in results.hotels:
+        print(f"{hotel.name} - ${hotel.min_price}/night")
+        print(f"  Rating: {hotel.rating}/5 ({hotel.review_count} reviews)")
+        print(f"  Type: {hotel.accommodation_type}")
+```
+
+### CLI Usage
+
+```bash
+# Search hotels
+flights hotels "new york" --max-price 200 --min-rating 4.0
+
+# List supported cities
+flights hotel-locations
+
+# Export to JSON
+flights hotels tokyo --format json -o hotels.json
+```
+
+## Combined Trip Planning
+
+```bash
+# Search flights + hotels together
+flights trip SFO tokyo --days 30 --nights 7
+
+# With price filters
+flights trip LAX "new york" --max-price 400 --max-hotel-price 150
+```
+
+```python
+# Python API
+from flightfinder import FlightFinder, HotelFinder
+from datetime import date, timedelta
+
+# Search flights
+with FlightFinder() as flight_finder:
+    flights = flight_finder.search_roundtrip(
+        origin="SFO",
+        destination="NRT",  # Tokyo Narita
+        departure_from=date.today() + timedelta(days=30),
+        min_days=7,
+        max_days=10,
+    )
+
+# Search hotels
+with HotelFinder() as hotel_finder:
+    hotels = hotel_finder.search_hotels("tokyo", limit=10)
+
+# Calculate trip cost
+min_flight = min(f.price for f in flights)
+min_hotel = min(h.min_price for h in hotels.hotels if h.min_price)
+total = min_flight + (min_hotel * 7)
+print(f"Estimated 7-night trip: ${total:.0f}")
+```
+
+## Discord Integration
+
+Send search results to Discord via webhook:
+
+```bash
+# One-time search with Discord notification
+flights search SFO -d LAX --discord
+
+# Round-trip with Discord notification
+flights roundtrip SFO -d tokyo --min-days 7 --max-days 14 --discord
+
+# Trip planning with Discord
+flights trip SFO tokyo --nights 7 --discord
+```
+
+### Configuration
+
+Add your Discord webhook URL to `~/.flightfinder/config.json`:
+
+```json
+{
+  "discord": {
+    "webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+  }
+}
+```
+
+### Python API
+
+```python
+from flightfinder import DiscordNotifier, FlightFinder
+
+# Search and send to Discord
+with FlightFinder() as finder:
+    flights = finder.search_flights("SFO", "LAX", ...)
+
+with DiscordNotifier(webhook_url="https://...") as notifier:
+    notifier.send_search_results("SFO", "LAX", flights)
+```
+
+## MCP Server (AI Agent Integration)
+
+FlightFinder includes an MCP (Model Context Protocol) server for integration with Claude and other AI agents.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `search_flights` | One-way flight search |
+| `search_roundtrip` | Round-trip search with trip duration |
+| `find_location` | Airport/city code lookup |
+| `search_hotels` | Hotel search by location |
+| `search_trip` | Combined flight + hotel search |
+
+### Usage with Claude Code
+
+Add to your Claude Code MCP configuration (`.claude/settings.local.json`):
+
+```json
+{
+  "mcpServers": {
+    "flightfinder": {
+      "command": "flights",
+      "args": ["mcp-server"]
+    }
+  }
+}
+```
+
+Or use the provided `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "flightfinder": {
+      "command": "python",
+      "args": ["-m", "flightfinder.mcp_server"]
+    }
+  }
+}
+```
+
+### Running the MCP Server
+
+```bash
+# Install with MCP support
+pip install flightfinder[mcp]
+
+# Run the MCP server (stdio transport)
+flights mcp-server
+
+# Or run directly
+python -m flightfinder.mcp_server
+```
+
 ## API Notes
 
 - No authentication required (public API)
@@ -360,6 +570,10 @@ flightfinder/
 - Cabin classes: ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST
 - For "anywhere" searches, pass the literal string `"anywhere"` as destination
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
 ## License
 
-MIT License
+MIT License - see [LICENSE](LICENSE) for details.

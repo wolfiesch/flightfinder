@@ -2,10 +2,10 @@
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Callable, Optional
 
 from flightfinder.client import FlightFinder
 from flightfinder.models import Flight, RoundTrip
@@ -23,11 +23,11 @@ class PriceAlert:
     min_days: int = 7
     max_days: int = 14
     max_stops: int = 1
-    departure_from: Optional[date] = None
-    departure_to: Optional[date] = None
+    departure_from: date | None = None
+    departure_to: date | None = None
     round_trip: bool = True
     cabin_class: str = "ECONOMY"
-    name: Optional[str] = None
+    name: str | None = None
     created_at: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict:
@@ -111,7 +111,7 @@ class DealAlertManager:
         matches = manager.check_alerts()
     """
 
-    def __init__(self, storage_path: Optional[Path] = None):
+    def __init__(self, storage_path: Path | None = None):
         """
         Initialize the alert manager.
 
@@ -120,8 +120,8 @@ class DealAlertManager:
         """
         self.storage_path = storage_path or Path.home() / ".flightfinder" / "alerts.json"
         self.alerts: list[PriceAlert] = []
-        self.on_match: Optional[AlertCallback] = None
-        self._finder: Optional[FlightFinder] = None
+        self.on_match: AlertCallback | None = None
+        self._finder: FlightFinder | None = None
 
         self._load_alerts()
 
@@ -138,7 +138,7 @@ class DealAlertManager:
         self._save_alerts()
         logger.info(f"Added alert: {alert.origin} → {alert.destination} ≤${alert.max_price}")
 
-    def remove_alert(self, index: int) -> Optional[PriceAlert]:
+    def remove_alert(self, index: int) -> PriceAlert | None:
         """Remove an alert by index."""
         if 0 <= index < len(self.alerts):
             alert = self.alerts.pop(index)

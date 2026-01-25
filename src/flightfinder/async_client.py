@@ -3,7 +3,6 @@
 import asyncio
 import logging
 from datetime import date, datetime, timedelta
-from typing import Optional
 
 import httpx
 
@@ -28,9 +27,9 @@ class AsyncFlightFinder:
 
     def __init__(
         self,
-        config: Optional[Config] = None,
-        cache: Optional[ResponseCache] = None,
-        timeout: Optional[float] = None,
+        config: Config | None = None,
+        cache: ResponseCache | None = None,
+        timeout: float | None = None,
     ):
         """
         Initialize the async FlightFinder client.
@@ -49,7 +48,7 @@ class AsyncFlightFinder:
             if self.config.cache.enabled
             else None
         )
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
         # Support legacy timeout parameter
         if timeout is not None:
@@ -89,7 +88,7 @@ class AsyncFlightFinder:
     async def find_location(
         self,
         term: str,
-        location_types: Optional[list[str]] = None,
+        location_types: list[str] | None = None,
         limit: int = 10,
     ) -> list[Location]:
         """
@@ -139,7 +138,7 @@ class AsyncFlightFinder:
 
         return locations
 
-    def _parse_location(self, node: dict) -> Optional[Location]:
+    def _parse_location(self, node: dict) -> Location | None:
         """Parse a location node from the API response."""
         gps = node.get("gps", {}) or {}
         node_type = node.get("__typename", "")
@@ -176,17 +175,17 @@ class AsyncFlightFinder:
         self,
         origin: str,
         destination: str = "anywhere",
-        departure_from: Optional[date] = None,
-        departure_to: Optional[date] = None,
-        adults: Optional[int] = None,
-        children: Optional[int] = None,
-        infants: Optional[int] = None,
-        cabin_class: Optional[str] = None,
-        max_stops: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        limit: Optional[int] = None,
-        max_price: Optional[float] = None,
-        min_price: Optional[float] = None,
+        departure_from: date | None = None,
+        departure_to: date | None = None,
+        adults: int | None = None,
+        children: int | None = None,
+        infants: int | None = None,
+        cabin_class: str | None = None,
+        max_stops: int | None = None,
+        sort_by: str | None = None,
+        limit: int | None = None,
+        max_price: float | None = None,
+        min_price: float | None = None,
     ) -> list[Flight]:
         """
         Search for flights from origin to destination.
@@ -322,8 +321,8 @@ class AsyncFlightFinder:
     async def search_anywhere(
         self,
         origin: str,
-        departure_from: Optional[date] = None,
-        departure_to: Optional[date] = None,
+        departure_from: date | None = None,
+        departure_to: date | None = None,
         **kwargs,
     ) -> list[Flight]:
         """Search for flights from origin to anywhere."""
@@ -339,18 +338,18 @@ class AsyncFlightFinder:
         self,
         origin: str,
         destination: str = "anywhere",
-        departure_from: Optional[date] = None,
-        departure_to: Optional[date] = None,
-        return_from: Optional[date] = None,
-        return_to: Optional[date] = None,
+        departure_from: date | None = None,
+        departure_to: date | None = None,
+        return_from: date | None = None,
+        return_to: date | None = None,
         min_days: int = 7,
         max_days: int = 21,
-        adults: Optional[int] = None,
-        cabin_class: Optional[str] = None,
-        max_stops: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        limit: Optional[int] = None,
-        max_price: Optional[float] = None,
+        adults: int | None = None,
+        cabin_class: str | None = None,
+        max_stops: int | None = None,
+        sort_by: str | None = None,
+        limit: int | None = None,
+        max_price: float | None = None,
     ) -> list[RoundTrip]:
         """
         Search for round-trip flights.
@@ -503,8 +502,8 @@ class AsyncFlightFinder:
         self,
         origins: list[str],
         destination: str = "anywhere",
-        departure_from: Optional[date] = None,
-        departure_to: Optional[date] = None,
+        departure_from: date | None = None,
+        departure_to: date | None = None,
         **kwargs,
     ) -> dict[str, list[Flight]]:
         """
@@ -544,7 +543,7 @@ class AsyncFlightFinder:
         return flight_map
 
     async def _execute_query(
-        self, query: str, variables: dict, feature_name: Optional[str] = None
+        self, query: str, variables: dict, feature_name: str | None = None
     ) -> dict:
         """Execute a GraphQL query with retry logic and caching."""
         # Check cache first
@@ -563,7 +562,7 @@ class AsyncFlightFinder:
         if feature_name:
             url = f"{url}?featureName={feature_name}"
 
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         for attempt in range(self.config.api.max_retries):
             try:
                 logger.debug(f"API request attempt {attempt + 1}/{self.config.api.max_retries}")
@@ -619,7 +618,7 @@ class AsyncFlightFinder:
             raise last_error
         raise NetworkError("Request failed after all retries")
 
-    def _parse_itinerary(self, data: dict) -> Optional[Flight]:
+    def _parse_itinerary(self, data: dict) -> Flight | None:
         """Parse a raw itinerary response into a Flight object."""
         sector = data.get("sector", {})
         segments_data = sector.get("sectorSegments", [])
@@ -691,7 +690,7 @@ class AsyncFlightFinder:
             deep_link=booking_url,
         )
 
-    def _parse_roundtrip(self, data: dict) -> Optional[RoundTrip]:
+    def _parse_roundtrip(self, data: dict) -> RoundTrip | None:
         """Parse a round-trip itinerary response."""
         outbound_data = data.get("outbound", {})
         inbound_data = data.get("inbound", {})
@@ -744,7 +743,7 @@ class AsyncFlightFinder:
             destination_city=destination_city,
         )
 
-    def _parse_sector(self, sector_data: dict) -> Optional[Flight]:
+    def _parse_sector(self, sector_data: dict) -> Flight | None:
         """Parse a sector (outbound or inbound) into a Flight object."""
         segments_data = sector_data.get("sectorSegments", [])
 
@@ -820,7 +819,7 @@ class AsyncFlightFinder:
         except (ValueError, TypeError):
             return 0.0
 
-    def cache_stats(self) -> Optional[dict]:
+    def cache_stats(self) -> dict | None:
         """Get cache statistics if caching is enabled."""
         if self._cache:
             return self._cache.stats()

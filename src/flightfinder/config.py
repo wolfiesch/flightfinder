@@ -4,7 +4,6 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -127,7 +126,7 @@ class Config:
         return config
 
     @classmethod
-    def load(cls, config_path: Optional[str | Path] = None) -> "Config":
+    def load(cls, config_path: str | Path | None = None) -> "Config":
         """
         Load configuration from file or environment.
 
@@ -247,7 +246,7 @@ class Config:
 
 
 # Global default configuration
-_default_config: Optional[Config] = None
+_default_config: Config | None = None
 
 
 def get_config() -> Config:

@@ -3,16 +3,13 @@
 import logging
 import time
 from datetime import date
-from typing import Optional
 
 import httpx
 
 from flightfinder.cache import ResponseCache, get_cache
-from flightfinder.config import CacheConfig
 from flightfinder.exceptions import (
     APIError,
     NetworkError,
-    ParseError,
     RateLimitError,
     TimeoutError,
     ValidationError,
@@ -54,8 +51,8 @@ class HotelFinder:
         """
         self.timeout = timeout
         self.max_retries = max_retries
-        self._client: Optional[httpx.Client] = None
-        self._cache: Optional[ResponseCache] = (
+        self._client: httpx.Client | None = None
+        self._cache: ResponseCache | None = (
             get_cache(max_size=100, default_ttl=cache_ttl)
             if cache_enabled
             else None
@@ -97,10 +94,10 @@ class HotelFinder:
         location: str,
         limit: int = 30,
         offset: int = 0,
-        min_price: Optional[float] = None,
-        max_price: Optional[float] = None,
-        min_rating: Optional[float] = None,
-        accommodation_types: Optional[list[str]] = None,
+        min_price: float | None = None,
+        max_price: float | None = None,
+        min_rating: float | None = None,
+        accommodation_types: list[str] | None = None,
     ) -> HotelSearchResults:
         """
         Search for hotels in a location.
@@ -274,7 +271,7 @@ class HotelFinder:
                 continue
         return hotels
 
-    def _parse_hotel(self, data: dict) -> Optional[Hotel]:
+    def _parse_hotel(self, data: dict) -> Hotel | None:
         """Parse a single hotel from API response."""
         review_data = data.get("review_summary")
         review_summary = None
@@ -354,7 +351,7 @@ class HotelFinder:
 
         url = f"{self.BASE_URL}{endpoint}"
 
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
                 logger.debug(f"API request attempt {attempt + 1}/{self.max_retries}: {endpoint}")
@@ -421,7 +418,7 @@ class HotelFinder:
             raise last_error
         raise NetworkError("Request failed after all retries")
 
-    def cache_stats(self) -> Optional[dict]:
+    def cache_stats(self) -> dict | None:
         """Get cache statistics if caching is enabled."""
         if self._cache:
             return self._cache.stats()

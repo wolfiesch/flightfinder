@@ -1,18 +1,16 @@
 """Discord webhook integration for FlightFinder notifications."""
 
-import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
 
 import httpx
 
-from flightfinder.models import Flight, RoundTrip, Segment
 from flightfinder.alerts import AlertMatch, PriceAlert
-from flightfinder.hotel_models import Hotel, HotelSearchResults
+from flightfinder.hotel_models import Hotel
+from flightfinder.models import Flight, RoundTrip, Segment
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +99,8 @@ class DiscordNotifier:
 
     def __init__(
         self,
-        webhook_url: Optional[str] = None,
-        config: Optional[DiscordConfig] = None,
+        webhook_url: str | None = None,
+        config: DiscordConfig | None = None,
     ):
         """
         Initialize the Discord notifier.
@@ -136,7 +134,7 @@ class DiscordNotifier:
     # Public API - High-level send methods
     # =========================================================================
 
-    def send_flight(self, flight: Flight, search_context: Optional[str] = None) -> bool:
+    def send_flight(self, flight: Flight, search_context: str | None = None) -> bool:
         """
         Send a single flight to Discord with full details.
 
@@ -168,7 +166,7 @@ class DiscordNotifier:
     def send_roundtrip(
         self,
         roundtrip: RoundTrip,
-        search_context: Optional[str] = None,
+        search_context: str | None = None,
     ) -> bool:
         """
         Send a round-trip itinerary to Discord with exhaustive details.
@@ -245,7 +243,7 @@ class DiscordNotifier:
         origin: str,
         destination: str,
         flights: list[Flight] | list[RoundTrip],
-        search_params: Optional[dict] = None,
+        search_params: dict | None = None,
     ) -> int:
         """
         Send all search results to Discord.
@@ -281,8 +279,8 @@ class DiscordNotifier:
     def send_monitoring_status(
         self,
         alerts: list[PriceAlert],
-        last_check: Optional[datetime] = None,
-        next_check: Optional[datetime] = None,
+        last_check: datetime | None = None,
+        next_check: datetime | None = None,
         matches_found: int = 0,
     ) -> bool:
         """Send a monitoring status update to Discord."""
@@ -309,7 +307,7 @@ class DiscordNotifier:
     # Hotel Methods
     # =========================================================================
 
-    def send_hotel(self, hotel: Hotel, search_context: Optional[str] = None) -> bool:
+    def send_hotel(self, hotel: Hotel, search_context: str | None = None) -> bool:
         """
         Send a single hotel to Discord with full details.
 
@@ -327,7 +325,7 @@ class DiscordNotifier:
         self,
         location: str,
         hotels: list[Hotel],
-        search_params: Optional[dict] = None,
+        search_params: dict | None = None,
     ) -> int:
         """
         Send hotel search results to Discord.
@@ -398,7 +396,7 @@ class DiscordNotifier:
     def _build_flight_embed(
         self,
         flight: Flight,
-        context: Optional[str] = None,
+        context: str | None = None,
     ) -> dict:
         """Build the main flight overview embed with ALL available fields."""
         # Determine title based on stops
@@ -544,7 +542,7 @@ class DiscordNotifier:
     def _build_roundtrip_summary_embed(
         self,
         roundtrip: RoundTrip,
-        context: Optional[str] = None,
+        context: str | None = None,
     ) -> dict:
         """Build the main round-trip summary embed."""
         out_date = roundtrip.outbound.departure_time.strftime("%b %d")
@@ -668,10 +666,10 @@ class DiscordNotifier:
 
         if isinstance(flight, RoundTrip):
             title = f"🔥 DEAL ALERT: {flight.origin} ↔ {flight.destination} ${flight.price:.0f}"
-            desc = f"A round-trip matching your alert is now available!"
+            desc = "A round-trip matching your alert is now available!"
         else:
             title = f"🔥 DEAL ALERT: {flight.origin} → {flight.destination} ${flight.price:.0f}"
-            desc = f"A flight matching your alert is now available!"
+            desc = "A flight matching your alert is now available!"
 
         if alert.name:
             desc = f"**Alert: {alert.name}**\n\n{desc}"
@@ -718,7 +716,7 @@ class DiscordNotifier:
         origin: str,
         destination: str,
         result_count: int,
-        search_params: Optional[dict] = None,
+        search_params: dict | None = None,
     ) -> dict:
         """Build a search header embed."""
         dest_display = destination if destination != "anywhere" else "Anywhere"
@@ -763,8 +761,8 @@ class DiscordNotifier:
     def _build_monitoring_status_embed(
         self,
         alerts: list[PriceAlert],
-        last_check: Optional[datetime],
-        next_check: Optional[datetime],
+        last_check: datetime | None,
+        next_check: datetime | None,
         matches_found: int,
     ) -> dict:
         """Build a monitoring status embed."""
@@ -816,7 +814,7 @@ class DiscordNotifier:
     def _build_hotel_embed(
         self,
         hotel: Hotel,
-        context: Optional[str] = None,
+        context: str | None = None,
     ) -> dict:
         """Build a detailed hotel embed."""
         # Rating-based color
@@ -922,7 +920,7 @@ class DiscordNotifier:
         self,
         location: str,
         result_count: int,
-        search_params: Optional[dict] = None,
+        search_params: dict | None = None,
     ) -> dict:
         """Build a hotel search header embed."""
         title = f"🔍 Hotel Search: {location}"
@@ -999,7 +997,7 @@ class DiscordNotifier:
                 "inline": True
             })
             fields.append({
-                "name": "🏨 Hotel Total ({} nights)".format(nights),
+                "name": f"🏨 Hotel Total ({nights} nights)",
                 "value": f"${total_hotel:.0f}",
                 "inline": True
             })
@@ -1127,7 +1125,7 @@ class DiscordNotifier:
 def send_to_discord(
     webhook_url: str,
     item: Flight | RoundTrip | AlertMatch | Hotel,
-    context: Optional[str] = None,
+    context: str | None = None,
 ) -> bool:
     """
     Quick helper to send a single flight/hotel/deal to Discord.

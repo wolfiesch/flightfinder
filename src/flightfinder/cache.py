@@ -6,7 +6,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class ResponseCache:
         )
         return hashlib.md5(key_data.encode()).hexdigest()
 
-    def get(self, query: str, variables: dict) -> Optional[Any]:
+    def get(self, query: str, variables: dict) -> Any | None:
         """
         Retrieve a cached response.
 
@@ -93,7 +93,7 @@ class ResponseCache:
         return entry.data
 
     def set(
-        self, query: str, variables: dict, data: Any, ttl: Optional[int] = None
+        self, query: str, variables: dict, data: Any, ttl: int | None = None
     ) -> None:
         """
         Store a response in the cache.
@@ -185,7 +185,7 @@ class ResponseCache:
 
 
 # Global cache instance
-_cache: Optional[ResponseCache] = None
+_cache: ResponseCache | None = None
 
 
 def get_cache(max_size: int = 100, default_ttl: int = 300) -> ResponseCache:

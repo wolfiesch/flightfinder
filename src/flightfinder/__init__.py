@@ -1,34 +1,34 @@
 """FlightFinder - Python client for Kiwi/Skypicker flight search API and Xotelo hotel search."""
 
-from flightfinder.client import FlightFinder
+from flightfinder.alerts import AlertMatch, DealAlertManager, PriceAlert
 from flightfinder.async_client import AsyncFlightFinder
-from flightfinder.models import Flight, Location, Itinerary, RoundTrip, Segment
+from flightfinder.cache import ResponseCache, clear_cache, get_cache
+from flightfinder.client import FlightFinder
+from flightfinder.config import Config, get_config, set_config
+from flightfinder.discord import DiscordConfig, DiscordNotifier, send_to_discord
+from flightfinder.exceptions import (
+    APIError,
+    ConfigurationError,
+    FlightFinderError,
+    NetworkError,
+    ParseError,
+    RateLimitError,
+    TimeoutError,
+    ValidationError,
+)
 from flightfinder.hotel_client import HotelFinder
 from flightfinder.hotel_models import (
+    LOCATION_KEYS,
     Hotel,
-    HotelRate,
-    HotelRates,
-    HotelSearchResults,
     HotelLocation,
     HotelPriceRange,
+    HotelRate,
+    HotelRates,
     HotelReviewSummary,
-    LOCATION_KEYS,
+    HotelSearchResults,
     get_location_key,
 )
-from flightfinder.config import Config, get_config, set_config
-from flightfinder.cache import ResponseCache, get_cache, clear_cache
-from flightfinder.alerts import PriceAlert, AlertMatch, DealAlertManager
-from flightfinder.discord import DiscordNotifier, DiscordConfig, send_to_discord
-from flightfinder.exceptions import (
-    FlightFinderError,
-    APIError,
-    RateLimitError,
-    ValidationError,
-    NetworkError,
-    TimeoutError,
-    ParseError,
-    ConfigurationError,
-)
+from flightfinder.models import Flight, Itinerary, Location, RoundTrip, Segment
 
 __all__ = [
     # Clients
@@ -77,4 +77,18 @@ __all__ = [
     "ParseError",
     "ConfigurationError",
 ]
-__version__ = "0.3.0"
+__version__ = "1.0.0"
+
+# Optional MCP server export (requires mcp package)
+def _load_mcp_server():
+    """Load MCP server if available."""
+    try:
+        from flightfinder.mcp_server import create_server
+        return create_server
+    except ImportError:
+        return None
+
+
+create_mcp_server = _load_mcp_server()
+if create_mcp_server is not None:
+    __all__.append("create_mcp_server")

@@ -1,566 +1,778 @@
 """HTTP server for FlightFinder MCP - enables MCP Apps UI rendering.
 
-MCP Apps requires HTTP transport (not stdio) to render interactive UIs.
-Run this server and tunnel it via cloudflared for Claude Desktop support.
+Uses FastMCP for proper Streamable HTTP transport support.
+Deploy to Fly.io or run locally with cloudflared.
 
 Usage:
     python -m flightfinder.mcp_http_server
+    python -m flightfinder.mcp_http_server --debug  # Verbose logging
 
-Then in another terminal:
-    npx cloudflared tunnel --url http://localhost:3001
-
-Add the cloudflared URL as a custom connector in Claude Desktop.
+Add the URL as a custom connector in Claude Desktop.
 """
 
-import asyncio
 import json
 import logging
+import os
 import sys
+import time
+import traceback
+from datetime import date, timedelta
+from functools import wraps
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Debug mode flag (set via --debug or FLIGHTFINDER_DEBUG env var)
+DEBUG_MODE = os.environ.get("FLIGHTFINDER_DEBUG", "").lower() in ("1", "true", "yes")
+
+
+def setup_debug_logging():
+    """Configure verbose logging for debugging Claude Desktop connections."""
+    # Configure root logger for verbose output
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stdout,
+        force=True,
+    )
+
+    # Also enable debug for key libraries
+    for name in ["mcp", "starlette", "uvicorn", "httpx"]:
+        logging.getLogger(name).setLevel(logging.DEBUG)
+
+    logger.info("=" * 60)
+    logger.info("DEBUG MODE ENABLED - Verbose logging active")
+    logger.info("=" * 60)
+
 # Default port for the HTTP server
 DEFAULT_PORT = 3001
 
+# Track sessions for debugging
+_active_sessions: dict[str, dict] = {}
 
-async def create_http_server(port: int = DEFAULT_PORT):
-    """Create and run the HTTP MCP server with MCP Apps support."""
-    try:
-        from starlette.applications import Starlette
-        from starlette.middleware.cors import CORSMiddleware
-        from starlette.requests import Request
-        from starlette.responses import JSONResponse, Response
-        from starlette.routing import Route
-        import uvicorn
-    except ImportError:
-        print("HTTP server requires additional dependencies.")
-        print("Install with: pip install starlette uvicorn")
-        sys.exit(1)
 
-    try:
-        from mcp.server import Server
-        from mcp.types import Resource, TextContent, Tool
-    except ImportError:
-        print("MCP support requires the 'mcp' package.")
-        print("Install with: pip install flightfinder[mcp]")
-        sys.exit(1)
+def log_request_details(method: str, path: str, headers: dict, body: bytes | None = None):
+    """Log detailed request information."""
+    if not DEBUG_MODE:
+        return
 
-    from flightfinder.mcp_server import create_server, TOOL_UI_VIEWS
-    from flightfinder.ui_resources import (
-        RESOURCE_MIME_TYPE,
-        get_resource_uri,
-        is_ui_available,
-        list_available_views,
-        load_ui_bundle,
-    )
+    logger.info("-" * 50)
+    logger.info(f">>> INCOMING REQUEST: {method} {path}")
+    logger.info(">>> Headers:")
+    for key, value in sorted(headers.items()):
+        # Mask potentially sensitive headers
+        if key.lower() in ("authorization", "cookie"):
+            value = f"{value[:20]}..." if len(value) > 20 else "[redacted]"
+        logger.info(f"    {key}: {value}")
 
-    # Create the MCP server
-    mcp_server = create_server()
-
-    # Cache for tool results (to populate UI resources)
-    _last_results: dict[str, dict] = {}
-
-    async def handle_mcp(request: Request) -> Response:
-        """Handle MCP JSON-RPC requests."""
+    if body:
         try:
-            body = await request.json()
-        except Exception:
-            return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+            body_str = body.decode("utf-8")
+            # Pretty print JSON
+            try:
+                body_json = json.loads(body_str)
+                logger.info(f">>> Body (JSON): {json.dumps(body_json, indent=2)}")
+            except json.JSONDecodeError:
+                logger.info(f">>> Body (raw): {body_str[:500]}{'...' if len(body_str) > 500 else ''}")
+        except UnicodeDecodeError:
+            logger.info(f">>> Body: <binary {len(body)} bytes>")
 
-        method = body.get("method", "")
-        params = body.get("params", {})
-        request_id = body.get("id")
 
-        logger.info(f"MCP request: {method}")
+def log_response_details(status: int, headers: dict, body_preview: str = ""):
+    """Log detailed response information."""
+    if not DEBUG_MODE:
+        return
 
-        try:
-            if method == "initialize":
-                # Return server capabilities
-                result = {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {},
-                        "resources": {"subscribe": False, "listChanged": False},
-                    },
-                    "serverInfo": {
-                        "name": "flightfinder",
-                        "version": "1.0.0",
-                    },
-                }
+    logger.info(f"<<< RESPONSE: {status}")
+    logger.info("<<< Headers:")
+    for key, value in sorted(headers.items()):
+        logger.info(f"    {key}: {value}")
+    if body_preview:
+        logger.info(f"<<< Body preview: {body_preview[:200]}{'...' if len(body_preview) > 200 else ''}")
+    logger.info("-" * 50)
 
-            elif method == "tools/list":
-                # List available tools with UI metadata
-                tools = []
-                for name in TOOL_UI_VIEWS:
-                    view = TOOL_UI_VIEWS[name]
-                    tool_def = _get_tool_definition(name)
-                    if tool_def:
-                        # Add UI metadata
-                        if is_ui_available() and view in list_available_views():
-                            tool_def["_meta"] = {
-                                "ui": {
-                                    "resourceUri": get_resource_uri(view),
-                                }
-                            }
-                        tools.append(tool_def)
-                result = {"tools": tools}
 
-            elif method == "tools/call":
-                # Execute a tool
-                tool_name = params.get("name", "")
-                arguments = params.get("arguments", {})
+def log_session_event(event: str, session_id: str | None = None, details: dict | None = None):
+    """Log MCP session state changes."""
+    if not DEBUG_MODE:
+        return
 
-                # Execute tool using local _execute_tool function
-                tool_result = await _execute_tool(tool_name, arguments)
+    logger.info(f"[SESSION] {event}")
+    if session_id:
+        logger.info(f"    Session ID: {session_id}")
+    if details:
+        for key, value in details.items():
+            logger.info(f"    {key}: {value}")
 
-                # Cache for resource rendering
-                if tool_name in TOOL_UI_VIEWS:
-                    _last_results[tool_name] = tool_result
 
-                result = {
-                    "content": [
-                        {"type": "text", "text": json.dumps(tool_result, default=str)}
-                    ],
-                    # Include structured content for MCP Apps
-                    "structuredContent": tool_result,
-                }
+def create_debug_middleware(app):
+    """Create Starlette middleware for request/response logging."""
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+    from starlette.responses import Response, StreamingResponse
 
-            elif method == "resources/list":
-                # List UI resources
-                resources = []
-                if is_ui_available():
-                    for tool_name, view in TOOL_UI_VIEWS.items():
-                        if view in list_available_views():
-                            resources.append({
-                                "uri": get_resource_uri(view),
-                                "name": f"FlightFinder {view.title()} UI",
-                                "description": f"Interactive UI for {tool_name}",
-                                "mimeType": RESOURCE_MIME_TYPE,
-                            })
-                result = {"resources": resources}
+    class DebugLoggingMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            start_time = time.time()
 
-            elif method == "resources/read":
-                # Return UI HTML with data
-                uri = params.get("uri", "")
-                if not uri.startswith("ui://flightfinder/"):
-                    return JSONResponse(
-                        {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": f"Unknown URI: {uri}"}},
-                        status_code=200,
-                    )
+            # Log request
+            headers = dict(request.headers)
+            body = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
 
-                view = uri.replace("ui://flightfinder/", "")
-                tool_name = next((k for k, v in TOOL_UI_VIEWS.items() if v == view), None)
+            log_request_details(request.method, str(request.url), headers, body)
 
-                if not tool_name or view not in list_available_views():
-                    return JSONResponse(
-                        {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": f"Unknown view: {view}"}},
-                        status_code=200,
-                    )
-
-                # Get cached data or empty
-                data = _last_results.get(tool_name, {})
-                html = load_ui_bundle(view, data)
-
-                result = {
-                    "contents": [
-                        {
-                            "uri": uri,
-                            "mimeType": RESOURCE_MIME_TYPE,
-                            "text": html,
-                        }
-                    ]
-                }
-
-            else:
-                return JSONResponse(
-                    {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}},
-                    status_code=200,
-                )
-
-            return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": result})
-
-        except Exception as e:
-            logger.exception(f"Error handling {method}")
-            return JSONResponse(
-                {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32603, "message": str(e)}},
-                status_code=200,
-            )
-
-    async def _execute_tool(name: str, args: dict) -> dict:
-        """Execute a FlightFinder tool and return the result."""
-        from datetime import date, timedelta
-        from flightfinder.client import FlightFinder
-        from flightfinder.hotel_client import HotelFinder
-        from flightfinder.hotel_models import get_location_key
-
-        if name == "search_flights":
-            days_from_now = args.get("days_from_now", 30)
-            search_window = args.get("search_window", 7)
-            departure_from = date.today() + timedelta(days=days_from_now)
-            departure_to = departure_from + timedelta(days=search_window)
-
-            with FlightFinder() as finder:
-                flights = finder.search_flights(
-                    origin=args["origin"].upper(),
-                    destination=args["destination"],
-                    departure_from=departure_from,
-                    departure_to=departure_to,
-                    max_stops=args.get("max_stops", 1),
-                    max_price=args.get("max_price"),
-                    limit=args.get("limit", 10),
-                )
-
-                return {
-                    "count": len(flights),
-                    "search": {
-                        "origin": args["origin"].upper(),
-                        "destination": args["destination"],
-                        "dates": f"{departure_from} to {departure_to}",
-                    },
-                    "flights": [
-                        {
-                            "price": f.price,
-                            "origin": f.origin,
-                            "destination": f.destination,
-                            "departure": f.departure_time.isoformat(),
-                            "arrival": f.arrival_time.isoformat(),
-                            "duration": f.duration_formatted,
-                            "stops": f.stops,
-                            "carriers": f.carriers,
-                            "booking_url": f.deep_link,
-                        }
-                        for f in flights
-                    ],
-                }
-
-        elif name == "search_roundtrip":
-            days_from_now = args.get("days_from_now", 30)
-            departure_from = date.today() + timedelta(days=days_from_now)
-            departure_to = departure_from + timedelta(days=7)
-
-            with FlightFinder() as finder:
-                roundtrips = finder.search_roundtrip(
-                    origin=args["origin"].upper(),
-                    destination=args["destination"],
-                    departure_from=departure_from,
-                    departure_to=departure_to,
-                    min_days=args.get("min_days", 7),
-                    max_days=args.get("max_days", 14),
-                    max_stops=args.get("max_stops", 1),
-                    max_price=args.get("max_price"),
-                    limit=args.get("limit", 10),
-                )
-
-                return {
-                    "count": len(roundtrips),
-                    "search": {
-                        "origin": args["origin"].upper(),
-                        "destination": args["destination"],
-                        "depart_around": str(departure_from),
-                        "trip_duration": f"{args.get('min_days', 7)}-{args.get('max_days', 14)} days",
-                    },
-                    "roundtrips": [
-                        {
-                            "price": rt.price,
-                            "price_with_bag": rt.price_with_bag,
-                            "origin": rt.origin,
-                            "destination": rt.destination,
-                            "destination_city": rt.destination_city,
-                            "outbound_date": rt.outbound.departure_time.date().isoformat(),
-                            "return_date": rt.inbound.departure_time.date().isoformat(),
-                            "trip_days": rt.trip_days,
-                            "outbound_stops": rt.outbound.stops,
-                            "return_stops": rt.inbound.stops,
-                            "carriers": rt.all_carriers,
-                            "booking_url": rt.booking_url,
-                        }
-                        for rt in roundtrips
-                    ],
-                }
-
-        elif name == "find_location":
-            location_types = [args["location_type"]] if args.get("location_type") else None
-
-            with FlightFinder() as finder:
-                locations = finder.find_location(
-                    term=args["query"],
-                    location_types=location_types,
-                    limit=args.get("limit", 5),
-                )
-
-                return {
-                    "count": len(locations),
-                    "query": args["query"],
-                    "locations": [
-                        {
-                            "code": loc.id,
-                            "name": loc.name,
-                            "type": loc.type,
-                            "city": loc.city,
-                            "country": loc.country,
-                            "country_code": loc.country_code,
-                        }
-                        for loc in locations
-                    ],
-                }
-
-        elif name == "search_hotels":
-            location = args["location"]
-            location_key = get_location_key(location)
-            if not location_key and not location.startswith("g"):
-                return {
-                    "error": f"Unknown location: {location}",
-                    "suggestion": "Use a supported city name",
-                }
-
-            search_location = location_key or location
-
-            with HotelFinder() as finder:
-                results = finder.search_hotels(
-                    location=search_location,
-                    limit=args.get("limit", 10),
-                    min_price=args.get("min_price"),
-                    max_price=args.get("max_price"),
-                    min_rating=args.get("min_rating"),
-                )
-
-                return {
-                    "count": len(results.hotels),
-                    "total_available": results.total_count,
-                    "location": location,
-                    "hotels": [
-                        {
-                            "name": h.name,
-                            "type": h.accommodation_type,
-                            "price_range": str(h.price_range) if h.price_range else None,
-                            "min_price": h.min_price,
-                            "max_price": h.max_price,
-                            "rating": h.rating,
-                            "review_count": h.review_count,
-                            "url": h.url,
-                            "highlights": h.mentions[:3] if h.mentions else [],
-                        }
-                        for h in results.hotels
-                    ],
-                }
-
-        elif name == "search_trip":
-            days_from_now = args.get("days_from_now", 30)
-            nights = args.get("nights", 7)
-            departure_from = date.today() + timedelta(days=days_from_now)
-            departure_to = departure_from + timedelta(days=7)
-            destination = args["destination"]
-            limit = args.get("limit", 5)
-
-            result = {
-                "origin": args["origin"].upper(),
-                "destination": destination,
-                "dates": {"depart_around": str(departure_from), "nights": nights},
-                "flights": [],
-                "hotels": [],
-                "estimated_total": None,
-            }
+            # Check for session ID in headers (MCP protocol)
+            session_id = headers.get("mcp-session-id")
+            if session_id:
+                log_session_event("Request with session", session_id)
 
             try:
-                with FlightFinder() as finder:
-                    roundtrips = finder.search_roundtrip(
-                        origin=args["origin"].upper(),
-                        destination=destination,
-                        departure_from=departure_from,
-                        departure_to=departure_to,
-                        min_days=nights,
-                        max_days=nights + 3,
-                        max_stops=1,
-                        max_price=args.get("max_flight_price"),
-                        limit=limit,
-                    )
-                    result["flights"] = [
-                        {
-                            "price": rt.price,
-                            "dates": f"{rt.outbound.departure_time.date()} - {rt.inbound.departure_time.date()}",
-                            "trip_days": rt.trip_days,
-                            "carriers": rt.all_carriers[:2],
-                        }
-                        for rt in roundtrips
-                    ]
-            except Exception as e:
-                result["flight_error"] = str(e)
+                response = await call_next(request)
+                elapsed = (time.time() - start_time) * 1000
 
-            location_key = get_location_key(destination)
-            if location_key:
-                try:
-                    with HotelFinder() as finder:
-                        hotels = finder.search_hotels(
-                            location=location_key,
-                            limit=limit,
-                            max_price=args.get("max_hotel_price"),
-                        )
-                        result["hotels"] = [
-                            {
-                                "name": h.name,
-                                "price_per_night": h.min_price,
-                                "rating": h.rating,
-                                "type": h.accommodation_type,
-                            }
-                            for h in hotels.hotels
-                        ]
-                except Exception as e:
-                    result["hotel_error"] = str(e)
-            else:
-                result["hotel_note"] = f"Hotel search not available for '{destination}'."
+                # Log response
+                response_headers = dict(response.headers)
+                response_headers["X-Response-Time"] = f"{elapsed:.2f}ms"
 
-            if result["flights"] and result["hotels"]:
-                min_flight = min(f["price"] for f in result["flights"])
-                hotel_prices = [h["price_per_night"] for h in result["hotels"] if h["price_per_night"]]
-                if hotel_prices:
-                    min_hotel = min(hotel_prices)
-                    result["estimated_total"] = {
-                        "flight": min_flight,
-                        "hotel_per_night": min_hotel,
-                        "hotel_total": min_hotel * nights,
-                        "total": min_flight + (min_hotel * nights),
-                        "nights": nights,
+                # For non-streaming responses, capture body preview
+                body_preview = ""
+                if not isinstance(response, StreamingResponse):
+                    if hasattr(response, "body"):
+                        try:
+                            body_preview = response.body.decode("utf-8")
+                        except (AttributeError, UnicodeDecodeError):
+                            pass
+
+                log_response_details(response.status_code, response_headers, body_preview)
+
+                # Log new session ID if created
+                new_session_id = response_headers.get("mcp-session-id")
+                if new_session_id and new_session_id != session_id:
+                    log_session_event("New session created", new_session_id)
+                    _active_sessions[new_session_id] = {
+                        "created_at": time.time(),
+                        "request_count": 1,
                     }
+                elif session_id and session_id in _active_sessions:
+                    _active_sessions[session_id]["request_count"] += 1
+
+                logger.info(f"[TIMING] {request.method} {request.url.path} -> {response.status_code} ({elapsed:.2f}ms)")
+
+                return response
+
+            except Exception as e:
+                elapsed = (time.time() - start_time) * 1000
+                logger.error(f"[ERROR] {request.method} {request.url.path} failed after {elapsed:.2f}ms")
+                logger.error(f"[ERROR] Exception: {type(e).__name__}: {e}")
+                logger.error(f"[ERROR] Stack trace:\n{traceback.format_exc()}")
+                raise
+
+    return DebugLoggingMiddleware
+
+
+def _is_valid_location_code(query: str) -> bool:
+    """Check if query looks like an existing location code.
+
+    Returns True for:
+    - 3-letter uppercase airport codes (SFO, NRT, JFK)
+    - City codes with underscores (tokyo_jp, new-york_ny_us)
+    - Already lowercase slugs (paris, london)
+    """
+    q = query.strip()
+    if not q:
+        return False
+    # 3-letter airport codes (e.g., SFO, NRT)
+    if len(q) == 3 and q.isalpha() and q.isupper():
+        return True
+    # City codes (e.g., tokyo_jp, new-york_ny_us)
+    if "_" in q:
+        return True
+    # Lowercase slugs that look like codes (not mixed case city names)
+    if q.islower() and q.isalpha() and len(q) <= 10:
+        return True
+    return False
+
+
+def _resolve_location(query: str, finder: Any) -> tuple[str, str | None]:
+    """Resolve a location query to a valid code.
+
+    Args:
+        query: Location string (city name or code)
+        finder: FlightFinder instance for API calls
+
+    Returns:
+        (resolved_code, resolution_note)
+        - resolved_code: The code to use for search
+        - resolution_note: Explanation if resolution happened, None if already valid
+    """
+    # Check if already looks like a valid code
+    if _is_valid_location_code(query):
+        return query, None
+
+    # Resolve via API
+    try:
+        locations = finder.find_location(term=query, limit=5)
+    except Exception as e:
+        logger.warning(f"Location resolution failed for '{query}': {e}")
+        return query, f"Could not resolve '{query}': {e}"
+
+    if not locations:
+        return query, f"Could not resolve '{query}' - no matches found"
+
+    # Prefer city code (broader coverage), then first airport
+    city = next((loc for loc in locations if loc.type == "CITY"), None)
+    if city:
+        return city.id, f"Resolved '{query}' → {city.id} ({city.name})"
+
+    # Fall back to first result (usually an airport)
+    first = locations[0]
+    return first.id, f"Resolved '{query}' → {first.id} ({first.name})"
+
+
+def create_app():
+    """Create the FastMCP HTTP application."""
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError:
+        print("MCP support requires the 'mcp' package.")
+        print("Install with: pip install flightfinder[mcp-http]")
+        sys.exit(1)
+
+    from flightfinder.client import FlightFinder
+    from flightfinder.hotel_client import HotelFinder
+    from flightfinder.hotel_models import get_location_key
+
+    # Create FastMCP server
+    mcp = FastMCP("FlightFinder")
+
+    # =========================================================================
+    # MCP PROMPTS - These teach Claude how to use the tools intelligently
+    # =========================================================================
+
+    @mcp.prompt()
+    def search_flights_guide() -> str:
+        """Guide for searching flights effectively."""
+        return """# FlightFinder Search Guide
+
+When a user asks about flights, follow this workflow:
+
+## Step 1: Resolve Location Codes
+ALWAYS use `find_location` first to get proper airport/city codes:
+- "Tokyo" → Use find_location("Tokyo") to get NRT (Narita), HND (Haneda), or tokyo_jp (city)
+- "San Francisco" → SFO
+- "New York" → JFK, EWR, LGA, or nyc_us (city)
+
+## Step 2: Search Strategy
+- For **round-trips**: Use `search_roundtrip` with the resolved codes
+- For **one-way**: Use `search_flights`
+- For **trip planning** (flights + hotels): Use `search_trip`
+
+## Step 3: Handle Empty Results
+If a search returns 0 results:
+1. Try using the CITY code instead of airport (e.g., "tokyo_jp" instead of "NRT")
+2. Expand the date range (increase search_window or days_from_now range)
+3. Increase max_stops to 2
+4. Try nearby airports
+
+## Example Workflow
+User: "Find flights from SF to Tokyo next month"
+
+1. find_location("San Francisco") → SFO
+2. find_location("Tokyo") → tokyo_jp (city), NRT, HND
+3. search_roundtrip(origin="SFO", destination="tokyo_jp", days_from_now=30)
+4. If empty, try: search_roundtrip(origin="SFO", destination="NRT", max_stops=2)
+"""
+
+    @mcp.prompt()
+    def trip_planning_guide() -> str:
+        """Comprehensive trip planning workflow."""
+        return """# Trip Planning with FlightFinder
+
+For comprehensive trip planning, use this approach:
+
+## Quick Trip Search
+Use `search_trip` for combined flight + hotel results:
+```
+search_trip(origin="SFO", destination="Tokyo", days_from_now=30, nights=7)
+```
+
+## Detailed Planning
+1. **Resolve destination**: find_location("destination city")
+2. **Search flights**: search_roundtrip with city code for best coverage
+3. **Search hotels**: search_hotels with the city name
+4. **Compare options**: Present flight + hotel combinations with total costs
+
+## Supported Hotel Cities
+Hotels are available for major cities: Paris, Tokyo, London, New York, Rome, Barcelona, etc.
+Use the city NAME (not code) for hotel searches.
+
+## Budget Planning
+- Use max_price filters to stay within budget
+- search_trip provides estimated_total combining cheapest flight + hotel
+"""
+
+    @mcp.tool()
+    def search_flights(
+        origin: str,
+        destination: str,
+        days_from_now: int = 30,
+        search_window: int = 7,
+        max_stops: int = 1,
+        max_price: float | None = None,
+        limit: int = 10,
+    ) -> dict:
+        """Search for one-way flights between airports.
+
+        Args:
+            origin: Origin airport code or city name (e.g., SFO, "San Francisco")
+            destination: Destination airport code or city name (e.g., NRT, "Tokyo")
+            days_from_now: Days from today to start searching
+            search_window: Number of days to search
+            max_stops: Maximum number of stops (0=direct only)
+            max_price: Maximum price filter
+            limit: Maximum results to return
+        """
+        departure_from = date.today() + timedelta(days=days_from_now)
+        departure_to = departure_from + timedelta(days=search_window)
+
+        with FlightFinder() as finder:
+            # Auto-resolve location names to codes
+            origin_code, origin_note = _resolve_location(origin, finder)
+            dest_code, dest_note = _resolve_location(destination, finder)
+
+            flights = finder.search_flights(
+                origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                destination=dest_code,
+                departure_from=departure_from,
+                departure_to=departure_to,
+                max_stops=max_stops,
+                max_price=max_price,
+                limit=limit,
+            )
+
+            result = {
+                "count": len(flights),
+                "search": {
+                    "origin": origin_code,
+                    "destination": dest_code,
+                    "dates": f"{departure_from} to {departure_to}",
+                },
+                "flights": [
+                    {
+                        "price": f.price,
+                        "origin": f.origin,
+                        "destination": f.destination,
+                        "departure": f.departure_time.isoformat(),
+                        "arrival": f.arrival_time.isoformat(),
+                        "duration": f.duration_formatted,
+                        "stops": f.stops,
+                        "carriers": f.carriers,
+                        "booking_url": f.deep_link,
+                    }
+                    for f in flights
+                ],
+            }
+
+            # Add resolution notes if any location was resolved
+            if origin_note or dest_note:
+                result["resolution"] = {}
+                if origin_note:
+                    result["resolution"]["origin"] = origin_note
+                if dest_note:
+                    result["resolution"]["destination"] = dest_note
 
             return result
 
-        return {"error": f"Unknown tool: {name}"}
+    @mcp.tool()
+    def search_roundtrip(
+        origin: str,
+        destination: str,
+        days_from_now: int = 30,
+        min_days: int = 7,
+        max_days: int = 14,
+        max_stops: int = 1,
+        max_price: float | None = None,
+        limit: int = 10,
+    ) -> dict:
+        """Search for round-trip flights.
 
-    def _get_tool_definition(name: str) -> dict | None:
-        """Get the tool definition for a given tool name."""
-        definitions = {
-            "search_flights": {
-                "name": "search_flights",
-                "description": "Search for one-way flights between airports",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "origin": {"type": "string", "description": "Origin airport code"},
-                        "destination": {"type": "string", "description": "Destination airport code"},
-                        "days_from_now": {"type": "integer", "default": 30},
-                        "search_window": {"type": "integer", "default": 7},
-                        "max_stops": {"type": "integer", "default": 1},
-                        "max_price": {"type": "number"},
-                        "limit": {"type": "integer", "default": 10},
-                    },
-                    "required": ["origin", "destination"],
+        Args:
+            origin: Origin airport code or city name (e.g., SFO, "San Francisco")
+            destination: Destination airport code or city name (e.g., NRT, "Tokyo")
+            days_from_now: Days from today to depart
+            min_days: Minimum trip length
+            max_days: Maximum trip length
+            max_stops: Maximum stops per leg
+            max_price: Maximum total price
+            limit: Maximum results
+        """
+        departure_from = date.today() + timedelta(days=days_from_now)
+        departure_to = departure_from + timedelta(days=7)
+
+        with FlightFinder() as finder:
+            # Auto-resolve location names to codes
+            origin_code, origin_note = _resolve_location(origin, finder)
+            dest_code, dest_note = _resolve_location(destination, finder)
+
+            roundtrips = finder.search_roundtrip(
+                origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                destination=dest_code,
+                departure_from=departure_from,
+                departure_to=departure_to,
+                min_days=min_days,
+                max_days=max_days,
+                max_stops=max_stops,
+                max_price=max_price,
+                limit=limit,
+            )
+
+            result = {
+                "count": len(roundtrips),
+                "search": {
+                    "origin": origin_code,
+                    "destination": dest_code,
+                    "depart_around": str(departure_from),
+                    "trip_duration": f"{min_days}-{max_days} days",
                 },
-            },
-            "search_roundtrip": {
-                "name": "search_roundtrip",
-                "description": "Search for round-trip flights",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "origin": {"type": "string"},
-                        "destination": {"type": "string"},
-                        "days_from_now": {"type": "integer", "default": 30},
-                        "min_days": {"type": "integer", "default": 7},
-                        "max_days": {"type": "integer", "default": 14},
-                        "max_stops": {"type": "integer", "default": 1},
-                        "max_price": {"type": "number"},
-                        "limit": {"type": "integer", "default": 10},
-                    },
-                    "required": ["origin", "destination"],
-                },
-            },
-            "find_location": {
-                "name": "find_location",
-                "description": "Search for airport or city codes",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "location_type": {"type": "string", "enum": ["AIRPORT", "CITY", "COUNTRY"]},
-                        "limit": {"type": "integer", "default": 5},
-                    },
-                    "required": ["query"],
-                },
-            },
-            "search_hotels": {
-                "name": "search_hotels",
-                "description": "Search for hotels in a city",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string"},
-                        "min_price": {"type": "number"},
-                        "max_price": {"type": "number"},
-                        "min_rating": {"type": "number"},
-                        "limit": {"type": "integer", "default": 10},
-                    },
-                    "required": ["location"],
-                },
-            },
-            "search_trip": {
-                "name": "search_trip",
-                "description": "Search for flights AND hotels together",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "origin": {"type": "string"},
-                        "destination": {"type": "string"},
-                        "days_from_now": {"type": "integer", "default": 30},
-                        "nights": {"type": "integer", "default": 7},
-                        "max_flight_price": {"type": "number"},
-                        "max_hotel_price": {"type": "number"},
-                        "limit": {"type": "integer", "default": 5},
-                    },
-                    "required": ["origin", "destination"],
-                },
-            },
+                "roundtrips": [
+                    {
+                        "price": rt.price,
+                        "price_with_bag": rt.price_with_bag,
+                        "origin": rt.origin,
+                        "destination": rt.destination,
+                        "destination_city": rt.destination_city,
+                        "outbound_date": rt.outbound.departure_time.date().isoformat(),
+                        "return_date": rt.inbound.departure_time.date().isoformat(),
+                        "trip_days": rt.trip_days,
+                        "outbound_stops": rt.outbound.stops,
+                        "return_stops": rt.inbound.stops,
+                        "carriers": rt.all_carriers,
+                        "booking_url": rt.booking_url,
+                    }
+                    for rt in roundtrips
+                ],
+            }
+
+            # Add resolution notes if any location was resolved
+            if origin_note or dest_note:
+                result["resolution"] = {}
+                if origin_note:
+                    result["resolution"]["origin"] = origin_note
+                if dest_note:
+                    result["resolution"]["destination"] = dest_note
+
+            return result
+
+    @mcp.tool()
+    def find_location(
+        query: str,
+        location_type: str | None = None,
+        limit: int = 5,
+    ) -> dict:
+        """Search for airport or city codes.
+
+        Args:
+            query: Search term (e.g., "Tokyo", "San Francisco")
+            location_type: Filter by AIRPORT, CITY, or COUNTRY
+            limit: Maximum results
+        """
+        location_types = [location_type] if location_type else None
+
+        with FlightFinder() as finder:
+            locations = finder.find_location(
+                term=query,
+                location_types=location_types,
+                limit=limit,
+            )
+
+            return {
+                "count": len(locations),
+                "query": query,
+                "locations": [
+                    {
+                        "code": loc.id,
+                        "name": loc.name,
+                        "type": loc.type,
+                        "city": loc.city,
+                        "country": loc.country,
+                        "country_code": loc.country_code,
+                    }
+                    for loc in locations
+                ],
+            }
+
+    @mcp.tool()
+    def search_hotels(
+        location: str,
+        min_price: float | None = None,
+        max_price: float | None = None,
+        min_rating: float | None = None,
+        limit: int = 10,
+    ) -> dict:
+        """Search for hotels in a city.
+
+        Args:
+            location: City name (e.g., "Paris", "Tokyo")
+            min_price: Minimum price per night
+            max_price: Maximum price per night
+            min_rating: Minimum rating (0-5)
+            limit: Maximum results
+        """
+        location_key = get_location_key(location)
+        if not location_key and not location.startswith("g"):
+            return {
+                "error": f"Unknown location: {location}",
+                "suggestion": "Use a supported city name like Paris, Tokyo, London",
+            }
+
+        search_location = location_key or location
+
+        with HotelFinder() as finder:
+            results = finder.search_hotels(
+                location=search_location,
+                limit=limit,
+                min_price=min_price,
+                max_price=max_price,
+                min_rating=min_rating,
+            )
+
+            return {
+                "count": len(results.hotels),
+                "total_available": results.total_count,
+                "location": location,
+                "hotels": [
+                    {
+                        "name": h.name,
+                        "type": h.accommodation_type,
+                        "price_range": str(h.price_range) if h.price_range else None,
+                        "min_price": h.min_price,
+                        "max_price": h.max_price,
+                        "rating": h.rating,
+                        "review_count": h.review_count,
+                        "url": h.url,
+                        "highlights": h.mentions[:3] if h.mentions else [],
+                    }
+                    for h in results.hotels
+                ],
+            }
+
+    @mcp.tool()
+    def search_trip(
+        origin: str,
+        destination: str,
+        days_from_now: int = 30,
+        nights: int = 7,
+        max_flight_price: float | None = None,
+        max_hotel_price: float | None = None,
+        limit: int = 5,
+    ) -> dict:
+        """Search for flights AND hotels together for trip planning.
+
+        Args:
+            origin: Origin airport code or city name (e.g., SFO, "San Francisco")
+            destination: Destination city name (e.g., "Tokyo", "Paris")
+            days_from_now: Days from today to depart
+            nights: Number of nights
+            max_flight_price: Max flight budget
+            max_hotel_price: Max hotel per night budget
+            limit: Results per category
+        """
+        departure_from = date.today() + timedelta(days=days_from_now)
+        departure_to = departure_from + timedelta(days=7)
+
+        # Search flights with auto-resolution
+        origin_note = None
+        dest_note = None
+        origin_code = origin
+        dest_code = destination
+
+        try:
+            with FlightFinder() as finder:
+                # Auto-resolve location names to codes
+                origin_code, origin_note = _resolve_location(origin, finder)
+                dest_code, dest_note = _resolve_location(destination, finder)
+
+                roundtrips = finder.search_roundtrip(
+                    origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                    destination=dest_code,
+                    departure_from=departure_from,
+                    departure_to=departure_to,
+                    min_days=nights,
+                    max_days=nights + 3,
+                    max_stops=1,
+                    max_price=max_flight_price,
+                    limit=limit,
+                )
+                flights = [
+                    {
+                        "price": rt.price,
+                        "dates": f"{rt.outbound.departure_time.date()} - {rt.inbound.departure_time.date()}",
+                        "trip_days": rt.trip_days,
+                        "carriers": rt.all_carriers[:2],
+                    }
+                    for rt in roundtrips
+                ]
+        except Exception as e:
+            flights = []
+            flight_error = str(e)
+        else:
+            flight_error = None
+
+        result = {
+            "origin": origin_code,
+            "destination": dest_code,
+            "dates": {"depart_around": str(departure_from), "nights": nights},
+            "flights": flights,
+            "hotels": [],
+            "estimated_total": None,
         }
-        return definitions.get(name)
 
-    async def health_check(request: Request) -> Response:
-        """Health check endpoint for Fly.io and monitoring."""
-        return JSONResponse({
+        if flight_error:
+            result["flight_error"] = flight_error
+
+        # Add resolution notes if any location was resolved
+        if origin_note or dest_note:
+            result["resolution"] = {}
+            if origin_note:
+                result["resolution"]["origin"] = origin_note
+            if dest_note:
+                result["resolution"]["destination"] = dest_note
+
+        # Search hotels
+        location_key = get_location_key(destination)
+        if location_key:
+            try:
+                with HotelFinder() as finder:
+                    hotels = finder.search_hotels(
+                        location=location_key,
+                        limit=limit,
+                        max_price=max_hotel_price,
+                    )
+                    result["hotels"] = [
+                        {
+                            "name": h.name,
+                            "price_per_night": h.min_price,
+                            "rating": h.rating,
+                            "type": h.accommodation_type,
+                        }
+                        for h in hotels.hotels
+                    ]
+            except Exception as e:
+                result["hotel_error"] = str(e)
+        else:
+            result["hotel_note"] = f"Hotel search not available for '{destination}'."
+
+        # Calculate estimated total
+        if result["flights"] and result["hotels"]:
+            min_flight = min(f["price"] for f in result["flights"])
+            hotel_prices = [h["price_per_night"] for h in result["hotels"] if h["price_per_night"]]
+            if hotel_prices:
+                min_hotel = min(hotel_prices)
+                result["estimated_total"] = {
+                    "flight": min_flight,
+                    "hotel_per_night": min_hotel,
+                    "hotel_total": min_hotel * nights,
+                    "total": min_flight + (min_hotel * nights),
+                    "nights": nights,
+                }
+
+        return result
+
+    # Add health check route with debug info
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health_check(request):
+        from starlette.responses import JSONResponse
+
+        response_data = {
             "status": "healthy",
             "service": "flightfinder-mcp",
-            "ui_available": is_ui_available(),
-            "ui_views": list_available_views() if is_ui_available() else [],
+            "debug_mode": DEBUG_MODE,
+        }
+
+        # Include session info in debug mode
+        if DEBUG_MODE:
+            response_data["active_sessions"] = len(_active_sessions)
+            response_data["sessions"] = {
+                sid: {
+                    "age_seconds": int(time.time() - info["created_at"]),
+                    "request_count": info["request_count"],
+                }
+                for sid, info in _active_sessions.items()
+            }
+
+        return JSONResponse(response_data)
+
+    # Add debug route for testing MCP protocol details
+    @mcp.custom_route("/debug/info", methods=["GET"])
+    async def debug_info(request):
+        from starlette.responses import JSONResponse
+
+        if not DEBUG_MODE:
+            return JSONResponse({"error": "Debug mode not enabled"}, status_code=403)
+
+        return JSONResponse({
+            "debug_mode": True,
+            "active_sessions": dict(_active_sessions),
+            "tools_registered": list(mcp._tools.keys()) if hasattr(mcp, "_tools") else "unknown",
+            "server_info": {
+                "name": "FlightFinder",
+                "transport": "streamable-http",
+            },
         })
 
-    # Create Starlette app
-    routes = [
-        Route("/mcp", handle_mcp, methods=["POST"]),
-        Route("/health", health_check, methods=["GET"]),
-    ]
-
-    app = Starlette(routes=routes)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # Run server
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
-    server = uvicorn.Server(config)
-
-    print(f"\n🛫 FlightFinder MCP HTTP Server")
-    print(f"   Listening on http://localhost:{port}/mcp")
-    print(f"\n📡 To use with Claude Desktop:")
-    print(f"   1. In another terminal: npx cloudflared tunnel --url http://localhost:{port}")
-    print(f"   2. Copy the https://...trycloudflare.com URL")
-    print(f"   3. Add as Custom Connector in Claude Desktop Settings > Connectors")
-    print(f"\n🎨 MCP Apps UI: {'Enabled' if is_ui_available() else 'Disabled (build ui/ first)'}")
-    print()
-
-    await server.serve()
+    return mcp
 
 
 def main():
     """Entry point for the HTTP server."""
+    global DEBUG_MODE
+
     import argparse
+    import asyncio
 
     parser = argparse.ArgumentParser(description="FlightFinder MCP HTTP Server")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port (default: {DEFAULT_PORT})")
+    parser.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
     args = parser.parse_args()
 
-    asyncio.run(create_http_server(port=args.port))
+    # Enable debug mode if flag or env var set
+    if args.debug or os.environ.get("FLIGHTFINDER_DEBUG", "").lower() in ("1", "true", "yes"):
+        DEBUG_MODE = True
+        setup_debug_logging()
+
+    mcp = create_app()
+
+    # Configure for external access
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = args.port
+    # Allow external hosts (Fly.io proxy, cloudflared)
+    mcp.settings.transport_security.enable_dns_rebinding_protection = False
+    mcp.settings.transport_security.allowed_hosts = ["*"]
+    mcp.settings.transport_security.allowed_origins = ["*"]
+
+    print(f"\n{'=' * 60}")
+    print(f"FlightFinder MCP HTTP Server (FastMCP)")
+    print(f"{'=' * 60}")
+    print(f"   Port: {args.port}")
+    print(f"   Debug mode: {'ENABLED' if DEBUG_MODE else 'disabled'}")
+    print(f"   Transport: Streamable HTTP")
+    print(f"\nEndpoints:")
+    print(f"   Health:  http://localhost:{args.port}/health")
+    print(f"   MCP:     http://localhost:{args.port}/mcp")
+    if DEBUG_MODE:
+        print(f"   Debug:   http://localhost:{args.port}/debug/info")
+    print(f"\nFor Claude Desktop (Fly.io):")
+    print(f"   https://flightfinder-mcp.fly.dev/mcp")
+    print(f"\nFor local testing with cloudflared:")
+    print(f"   npx cloudflared tunnel --url http://localhost:{args.port}")
+    print(f"{'=' * 60}\n")
+
+    if DEBUG_MODE:
+        logger.info("Starting server with debug logging enabled...")
+
+    # Run with Streamable HTTP transport
+    asyncio.run(mcp.run_streamable_http_async())
 
 
 if __name__ == "__main__":

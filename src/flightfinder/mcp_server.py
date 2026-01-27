@@ -10,6 +10,51 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def _is_valid_location_code(query: str) -> bool:
+    """Check if query looks like an existing location code."""
+    q = query.strip()
+    if not q:
+        return False
+    # 3-letter airport codes (e.g., SFO, NRT)
+    if len(q) == 3 and q.isalpha() and q.isupper():
+        return True
+    # City codes (e.g., tokyo_jp, new-york_ny_us)
+    if "_" in q:
+        return True
+    # Lowercase slugs that look like codes
+    if q.islower() and q.isalpha() and len(q) <= 10:
+        return True
+    return False
+
+
+def _resolve_location(query: str, finder: Any) -> tuple[str, str | None]:
+    """Resolve a location query to a valid code.
+
+    Returns:
+        (resolved_code, resolution_note)
+    """
+    if _is_valid_location_code(query):
+        return query, None
+
+    try:
+        locations = finder.find_location(term=query, limit=5)
+    except Exception as e:
+        logger.warning(f"Location resolution failed for '{query}': {e}")
+        return query, f"Could not resolve '{query}': {e}"
+
+    if not locations:
+        return query, f"Could not resolve '{query}' - no matches found"
+
+    # Prefer city code (broader coverage), then first airport
+    city = next((loc for loc in locations if loc.type == "CITY"), None)
+    if city:
+        return city.id, f"Resolved '{query}' → {city.id} ({city.name})"
+
+    first = locations[0]
+    return first.id, f"Resolved '{query}' → {first.id} ({first.name})"
+
+
 # Tool to UI view mapping
 TOOL_UI_VIEWS = {
     "search_flights": "flights",
@@ -377,9 +422,13 @@ def create_server():
         departure_to = departure_from + timedelta(days=search_window)
 
         with FlightFinder() as finder:
+            # Auto-resolve location names to codes
+            origin_code, origin_note = _resolve_location(args["origin"], finder)
+            dest_code, dest_note = _resolve_location(args["destination"], finder)
+
             flights = finder.search_flights(
-                origin=args["origin"].upper(),
-                destination=args["destination"],
+                origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                destination=dest_code,
                 departure_from=departure_from,
                 departure_to=departure_to,
                 max_stops=args.get("max_stops", 1),
@@ -387,11 +436,11 @@ def create_server():
                 limit=args.get("limit", 10),
             )
 
-            return {
+            result = {
                 "count": len(flights),
                 "search": {
-                    "origin": args["origin"].upper(),
-                    "destination": args["destination"],
+                    "origin": origin_code,
+                    "destination": dest_code,
                     "dates": f"{departure_from} to {departure_to}",
                 },
                 "flights": [
@@ -410,6 +459,15 @@ def create_server():
                 ],
             }
 
+            if origin_note or dest_note:
+                result["resolution"] = {}
+                if origin_note:
+                    result["resolution"]["origin"] = origin_note
+                if dest_note:
+                    result["resolution"]["destination"] = dest_note
+
+            return result
+
     def _search_roundtrip(args: dict) -> dict:
         """Execute round-trip flight search."""
         days_from_now = args.get("days_from_now", 30)
@@ -417,9 +475,13 @@ def create_server():
         departure_to = departure_from + timedelta(days=7)
 
         with FlightFinder() as finder:
+            # Auto-resolve location names to codes
+            origin_code, origin_note = _resolve_location(args["origin"], finder)
+            dest_code, dest_note = _resolve_location(args["destination"], finder)
+
             roundtrips = finder.search_roundtrip(
-                origin=args["origin"].upper(),
-                destination=args["destination"],
+                origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                destination=dest_code,
                 departure_from=departure_from,
                 departure_to=departure_to,
                 min_days=args.get("min_days", 7),
@@ -429,11 +491,11 @@ def create_server():
                 limit=args.get("limit", 10),
             )
 
-            return {
+            result = {
                 "count": len(roundtrips),
                 "search": {
-                    "origin": args["origin"].upper(),
-                    "destination": args["destination"],
+                    "origin": origin_code,
+                    "destination": dest_code,
                     "depart_around": str(departure_from),
                     "trip_duration": f"{args.get('min_days', 7)}-{args.get('max_days', 14)} days",
                 },
@@ -455,6 +517,15 @@ def create_server():
                     for rt in roundtrips
                 ],
             }
+
+            if origin_note or dest_note:
+                result["resolution"] = {}
+                if origin_note:
+                    result["resolution"]["origin"] = origin_note
+                if dest_note:
+                    result["resolution"]["destination"] = dest_note
+
+            return result
 
     def _find_location(args: dict) -> dict:
         """Execute location search."""
@@ -536,24 +607,21 @@ def create_server():
         destination = args["destination"]
         limit = args.get("limit", 5)
 
-        result = {
-            "origin": args["origin"].upper(),
-            "destination": destination,
-            "dates": {
-                "depart_around": str(departure_from),
-                "nights": nights,
-            },
-            "flights": [],
-            "hotels": [],
-            "estimated_total": None,
-        }
+        # Search flights with auto-resolution
+        origin_note = None
+        dest_note = None
+        origin_code = args["origin"]
+        dest_code = destination
 
-        # Search flights
         try:
             with FlightFinder() as finder:
+                # Auto-resolve location names to codes
+                origin_code, origin_note = _resolve_location(args["origin"], finder)
+                dest_code, dest_note = _resolve_location(destination, finder)
+
                 roundtrips = finder.search_roundtrip(
-                    origin=args["origin"].upper(),
-                    destination=destination,
+                    origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                    destination=dest_code,
                     departure_from=departure_from,
                     departure_to=departure_to,
                     min_days=nights,
@@ -562,7 +630,7 @@ def create_server():
                     max_price=args.get("max_flight_price"),
                     limit=limit,
                 )
-                result["flights"] = [
+                flights = [
                     {
                         "price": rt.price,
                         "dates": f"{rt.outbound.departure_time.date()} - {rt.inbound.departure_time.date()}",
@@ -572,7 +640,32 @@ def create_server():
                     for rt in roundtrips
                 ]
         except Exception as e:
-            result["flight_error"] = str(e)
+            flights = []
+            flight_error = str(e)
+        else:
+            flight_error = None
+
+        result = {
+            "origin": origin_code,
+            "destination": dest_code,
+            "dates": {
+                "depart_around": str(departure_from),
+                "nights": nights,
+            },
+            "flights": flights,
+            "hotels": [],
+            "estimated_total": None,
+        }
+
+        if flight_error:
+            result["flight_error"] = flight_error
+
+        if origin_note or dest_note:
+            result["resolution"] = {}
+            if origin_note:
+                result["resolution"]["origin"] = origin_note
+            if dest_note:
+                result["resolution"]["destination"] = dest_note
 
         # Search hotels
         location_key = get_location_key(destination)

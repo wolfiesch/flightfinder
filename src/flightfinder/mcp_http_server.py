@@ -18,6 +18,7 @@ import time
 import traceback
 from datetime import date, timedelta
 from functools import wraps
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -234,6 +235,7 @@ def create_app():
     """Create the FastMCP HTTP application."""
     try:
         from mcp.server.fastmcp import FastMCP
+        from mcp.server.fastmcp.resources.types import FileResource
     except ImportError:
         print("MCP support requires the 'mcp' package.")
         print("Install with: pip install flightfinder[mcp-http]")
@@ -243,8 +245,37 @@ def create_app():
     from flightfinder.hotel_client import HotelFinder
     from flightfinder.hotel_models import get_location_key
 
+    # UI Resources for MCP Apps
+    UI_DIR = Path(__file__).parent.parent.parent / "ui" / "mcp-apps"
+    MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
+
+    # Resource URI mapping: tool_name -> (html_file, resource_uri)
+    UI_RESOURCES = {
+        "search_flights": ("flights.html", "app://flightfinder/flights"),
+        "search_roundtrip": ("roundtrip.html", "app://flightfinder/roundtrip"),
+        "search_hotels": ("hotels.html", "app://flightfinder/hotels"),
+        "search_trip": ("trip.html", "app://flightfinder/trip"),
+        "find_location": ("locations.html", "app://flightfinder/locations"),
+    }
+
     # Create FastMCP server
     mcp = FastMCP("FlightFinder")
+
+    # Register UI resources for MCP Apps
+    # DISABLED: UI resources causing Claude.ai to hang during discovery phase
+    # See: https://github.com/anthropics/claude-code/issues/XXX
+    # for tool_name, (html_file, resource_uri) in UI_RESOURCES.items():
+    #     html_path = UI_DIR / html_file
+    #     if html_path.exists():
+    #         mcp.add_resource(
+    #             FileResource(
+    #                 uri=resource_uri,
+    #                 path=html_path,
+    #                 name=f"{tool_name}-ui",
+    #                 title=f"FlightFinder {tool_name.replace('_', ' ').title()} UI",
+    #                 mime_type=MCP_APP_MIME_TYPE,
+    #             )
+    #         )
 
     # =========================================================================
     # MCP PROMPTS - These teach Claude how to use the tools intelligently
@@ -312,6 +343,8 @@ Use the city NAME (not code) for hotel searches.
 - search_trip provides estimated_total combining cheapest flight + hotel
 """
 
+    # UI metadata disabled - was causing Claude.ai to hang
+    # meta={"ui": {"resourceUri": "app://flightfinder/flights", "csp": {"resourceDomains": ["https://unpkg.com"]}}}
     @mcp.tool()
     def search_flights(
         origin: str,
@@ -384,6 +417,8 @@ Use the city NAME (not code) for hotel searches.
 
             return result
 
+    # UI metadata disabled - was causing Claude.ai to hang
+    # meta={"ui": {"resourceUri": "app://flightfinder/roundtrip", "csp": {"resourceDomains": ["https://unpkg.com"]}}}
     @mcp.tool()
     def search_roundtrip(
         origin: str,
@@ -464,6 +499,8 @@ Use the city NAME (not code) for hotel searches.
 
             return result
 
+    # UI metadata disabled - was causing Claude.ai to hang
+    # meta={"ui": {"resourceUri": "app://flightfinder/locations", "csp": {"resourceDomains": ["https://unpkg.com"]}}}
     @mcp.tool()
     def find_location(
         query: str,
@@ -502,6 +539,8 @@ Use the city NAME (not code) for hotel searches.
                 ],
             }
 
+    # UI metadata disabled - was causing Claude.ai to hang
+    # meta={"ui": {"resourceUri": "app://flightfinder/hotels", "csp": {"resourceDomains": ["https://unpkg.com"]}}}
     @mcp.tool()
     def search_hotels(
         location: str,
@@ -557,6 +596,8 @@ Use the city NAME (not code) for hotel searches.
                 ],
             }
 
+    # UI metadata disabled - was causing Claude.ai to hang
+    # meta={"ui": {"resourceUri": "app://flightfinder/trip", "csp": {"resourceDomains": ["https://unpkg.com"]}}}
     @mcp.tool()
     def search_trip(
         origin: str,

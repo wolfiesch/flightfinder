@@ -111,17 +111,7 @@ async def create_http_server(port: int = DEFAULT_PORT):
                 tool_name = params.get("name", "")
                 arguments = params.get("arguments", {})
 
-                # Import the search functions
-                from flightfinder.mcp_server import (
-                    _search_flights,
-                    _search_roundtrip,
-                    _find_location,
-                    _search_hotels,
-                    _search_trip,
-                )
-
-                # This is a bit hacky - we need to call the internal functions
-                # In production, you'd refactor to share the logic properly
+                # Execute tool using local _execute_tool function
                 tool_result = await _execute_tool(tool_name, arguments)
 
                 # Cache for resource rendering

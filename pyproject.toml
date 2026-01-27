@@ -43,12 +43,18 @@ dev = [
 mcp = [
     "mcp>=1.0.0",
 ]
+mcp-http = [
+    "mcp>=1.0.0",
+    "starlette>=0.40.0",
+    "uvicorn>=0.32.0",
+]
 all = [
-    "flightfinder[dev,mcp]",
+    "flightfinder[dev,mcp,mcp-http]",
 ]
 
 [project.scripts]
 flights = "flightfinder.cli:main"
+flightfinder-mcp-http = "flightfinder.mcp_http_server:main"
 
 [build-system]
 requires = ["hatchling"]

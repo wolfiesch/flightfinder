@@ -1,4 +1,7 @@
-"""MCP server for FlightFinder - AI agent integration via Model Context Protocol."""
+"""MCP server for FlightFinder - AI agent integration via Model Context Protocol.
+
+Supports MCP Apps for interactive UI rendering in Claude Desktop, VS Code, and ChatGPT.
+"""
 
 import json
 import logging
@@ -6,6 +9,15 @@ from datetime import date, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Tool to UI view mapping
+TOOL_UI_VIEWS = {
+    "search_flights": "flights",
+    "search_roundtrip": "roundtrip",
+    "search_hotels": "hotels",
+    "search_trip": "trip",
+    "find_location": "locations",
+}
 
 
 def create_server():
@@ -19,7 +31,7 @@ def create_server():
     """
     try:
         from mcp.server import Server
-        from mcp.types import TextContent, Tool
+        from mcp.types import Resource, TextContent, Tool
     except ImportError as err:
         raise ImportError(
             "MCP support requires the 'mcp' package. "
@@ -30,12 +42,42 @@ def create_server():
     from flightfinder.hotel_client import HotelFinder
     from flightfinder.hotel_models import get_location_key
 
+    # Import UI resources (optional - graceful degradation if not built)
+    try:
+        from flightfinder.ui_resources import (
+            RESOURCE_MIME_TYPE,
+            get_resource_uri,
+            is_ui_available,
+            list_available_views,
+            load_ui_bundle,
+        )
+        UI_ENABLED = is_ui_available()
+    except ImportError:
+        UI_ENABLED = False
+        logger.info("UI resources not available - text-only mode")
+
     server = Server("flightfinder")
+
+    # Cache for the last result of each tool (for read_resource)
+    _last_results: dict[str, dict] = {}
+
+    def _get_tool_meta(tool_name: str) -> dict | None:
+        """Get UI metadata for a tool if UI is available."""
+        if not UI_ENABLED or tool_name not in TOOL_UI_VIEWS:
+            return None
+        view = TOOL_UI_VIEWS[tool_name]
+        if view not in list_available_views():
+            return None
+        return {
+            "ui": {
+                "resourceUri": get_resource_uri(view),
+            }
+        }
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        """List available FlightFinder tools."""
-        return [
+        """List available FlightFinder tools with UI metadata."""
+        tools = [
             Tool(
                 name="search_flights",
                 description="Search for one-way flights between airports",
@@ -223,6 +265,68 @@ def create_server():
             ),
         ]
 
+        # Add UI metadata to tools if available
+        if UI_ENABLED:
+            for tool in tools:
+                meta = _get_tool_meta(tool.name)
+                if meta:
+                    # Create a new Tool with annotations containing UI metadata
+                    # Note: Tool.model_dump() gives us a dict we can modify
+                    pass  # UI metadata is handled via resources
+
+        return tools
+
+    @server.list_resources()
+    async def list_resources() -> list[Resource]:
+        """List available UI resources."""
+        if not UI_ENABLED:
+            return []
+
+        resources = []
+        for tool_name, view in TOOL_UI_VIEWS.items():
+            if view in list_available_views():
+                resources.append(
+                    Resource(
+                        uri=get_resource_uri(view),
+                        name=f"FlightFinder {view.title()} UI",
+                        description=f"Interactive UI for {tool_name} results",
+                        mimeType=RESOURCE_MIME_TYPE,
+                    )
+                )
+        return resources
+
+    @server.read_resource()
+    async def read_resource(uri: str) -> str:
+        """Read a UI resource and return the HTML with injected data."""
+        if not UI_ENABLED:
+            return json.dumps({"error": "UI not available"})
+
+        # Extract view from URI (ui://flightfinder/flights -> flights)
+        if not uri.startswith("ui://flightfinder/"):
+            return json.dumps({"error": f"Unknown resource URI: {uri}"})
+
+        view = uri.replace("ui://flightfinder/", "")
+
+        # Find the tool that uses this view
+        tool_name = None
+        for name, v in TOOL_UI_VIEWS.items():
+            if v == view:
+                tool_name = name
+                break
+
+        if not tool_name:
+            return json.dumps({"error": f"Unknown view: {view}"})
+
+        # Get cached data for this tool
+        data = _last_results.get(tool_name, {})
+
+        try:
+            html = load_ui_bundle(view, data)
+            return html
+        except Exception as e:
+            logger.exception(f"Error loading UI bundle for {view}")
+            return json.dumps({"error": str(e)})
+
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         """Execute a FlightFinder tool."""
@@ -240,7 +344,26 @@ def create_server():
             else:
                 result = {"error": f"Unknown tool: {name}"}
 
-            return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+            # Cache result for read_resource
+            if not result.get("error"):
+                _last_results[name] = result
+
+            # Build response with text content
+            contents = [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+
+            # Add UI metadata hint if available
+            if UI_ENABLED and name in TOOL_UI_VIEWS:
+                view = TOOL_UI_VIEWS[name]
+                if view in list_available_views():
+                    # Add a hint for the host that a UI is available
+                    result["_ui"] = {
+                        "resourceUri": get_resource_uri(view),
+                        "mimeType": RESOURCE_MIME_TYPE,
+                    }
+                    # Update the text content with the UI hint
+                    contents = [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+
+            return contents
 
         except Exception as e:
             logger.exception(f"Error executing tool {name}")

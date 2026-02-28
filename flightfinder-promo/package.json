@@ -12,15 +12,15 @@
     "*.css"
   ],
   "dependencies": {
-    "@remotion/bundler": "^4.0.409",
-    "@remotion/cli": "^4.0.409",
+    "@remotion/bundler": "^4.0.431",
+    "@remotion/cli": "^4.0.431",
     "@remotion/transitions": "^4.0.409",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "remotion": "^4.0.409"
   },
   "devDependencies": {
-    "@remotion/tailwind": "^4.0.409",
+    "@remotion/tailwind": "^4.0.431",
     "@types/react": "^19.2.9",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.23",

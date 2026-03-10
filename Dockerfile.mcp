@@ -1,11 +1,19 @@
 # FlightFinder MCP HTTP Server Dockerfile
-# For deployment on Fly.io - serves MCP Apps UI for Claude Desktop/Web
+# Multi-stage build: Node.js for UI, Python for server
 #
-# Build: fly deploy --config fly.mcp.toml --dockerfile Dockerfile.mcp
+# Deploy: railway up / fly deploy --config fly.mcp.toml --dockerfile Dockerfile.mcp
 
+# Stage 1: Build UI bundles
+FROM node:20-slim AS ui-builder
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build:all
+
+# Stage 2: Python server
 FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
 # Install system dependencies
@@ -20,8 +28,8 @@ COPY src/ src/
 # Install the package with MCP HTTP dependencies
 RUN pip install --no-cache-dir -e ".[mcp-http]"
 
-# Copy pre-built UI bundles (5 views: flights, roundtrip, hotels, locations, trip)
-COPY ui/dist/ /app/ui/dist/
+# Copy built UI bundles from stage 1
+COPY --from=ui-builder /ui/dist/ /app/ui/dist/
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

@@ -1,15 +1,14 @@
 """Tests for FlightFinder exceptions."""
 
-import pytest
 from flightfinder.exceptions import (
-    FlightFinderError,
     APIError,
-    RateLimitError,
-    ValidationError,
-    NetworkError,
-    TimeoutError,
-    ParseError,
     ConfigurationError,
+    FlightFinderError,
+    NetworkError,
+    ParseError,
+    RateLimitError,
+    TimeoutError,
+    ValidationError,
 )
 
 

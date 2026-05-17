@@ -34,18 +34,14 @@ def create_parser() -> argparse.ArgumentParser:
         prog="flights",
         description="Search for flights using FlightFinder",
     )
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Enable verbose output"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Search command (one-way)
     search_parser = subparsers.add_parser("search", help="Search for one-way flights")
     _add_common_args(search_parser)
-    search_parser.add_argument(
-        "--min-price", type=float, help="Minimum price filter"
-    )
+    search_parser.add_argument("--min-price", type=float, help="Minimum price filter")
 
     # Round-trip command
     roundtrip_parser = subparsers.add_parser("roundtrip", help="Search for round-trip flights")
@@ -59,9 +55,7 @@ def create_parser() -> argparse.ArgumentParser:
     roundtrip_parser.add_argument(
         "--return-from", type=int, help="Days from now for earliest return"
     )
-    roundtrip_parser.add_argument(
-        "--return-to", type=int, help="Days from now for latest return"
-    )
+    roundtrip_parser.add_argument("--return-to", type=int, help="Days from now for latest return")
 
     # Location search command
     location_parser = subparsers.add_parser("location", help="Search for airport/city codes")
@@ -86,19 +80,15 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Hotels command
     hotels_parser = subparsers.add_parser("hotels", help="Search for hotels")
-    hotels_parser.add_argument("location", help="City name (e.g., 'New York') or location key (e.g., 'g60763')")
+    hotels_parser.add_argument(
+        "location", help="City name (e.g., 'New York') or location key (e.g., 'g60763')"
+    )
     hotels_parser.add_argument(
         "--limit", type=int, default=20, help="Number of results (default: 20)"
     )
-    hotels_parser.add_argument(
-        "--min-price", type=float, help="Minimum nightly price filter"
-    )
-    hotels_parser.add_argument(
-        "--max-price", type=float, help="Maximum nightly price filter"
-    )
-    hotels_parser.add_argument(
-        "--min-rating", type=float, help="Minimum rating filter (0-5)"
-    )
+    hotels_parser.add_argument("--min-price", type=float, help="Minimum nightly price filter")
+    hotels_parser.add_argument("--max-price", type=float, help="Maximum nightly price filter")
+    hotels_parser.add_argument("--min-rating", type=float, help="Minimum rating filter (0-5)")
     hotels_parser.add_argument(
         "--type",
         choices=["Hotel", "Hostel", "Motel", "Resort", "Ryokan", "B&B"],
@@ -133,12 +123,8 @@ def create_parser() -> argparse.ArgumentParser:
     trip_parser.add_argument(
         "--nights", type=int, default=7, help="Number of nights to stay (default: 7)"
     )
-    trip_parser.add_argument(
-        "--max-price", type=float, help="Maximum flight price filter"
-    )
-    trip_parser.add_argument(
-        "--max-hotel-price", type=float, help="Maximum hotel price per night"
-    )
+    trip_parser.add_argument("--max-price", type=float, help="Maximum flight price filter")
+    trip_parser.add_argument("--max-hotel-price", type=float, help="Maximum hotel price per night")
     trip_parser.add_argument(
         "--max-stops", type=int, default=1, help="Maximum flight stops (default: 1)"
     )
@@ -167,16 +153,10 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--days", type=int, default=30, help="Days from now to start search (default: 30)"
     )
-    parser.add_argument(
-        "--window", type=int, default=7, help="Search window in days (default: 7)"
-    )
-    parser.add_argument(
-        "--max-stops", type=int, default=1, help="Maximum stops (default: 1)"
-    )
+    parser.add_argument("--window", type=int, default=7, help="Search window in days (default: 7)")
+    parser.add_argument("--max-stops", type=int, default=1, help="Maximum stops (default: 1)")
     parser.add_argument("--max-price", type=float, help="Maximum price filter")
-    parser.add_argument(
-        "--limit", type=int, default=20, help="Number of results (default: 20)"
-    )
+    parser.add_argument("--limit", type=int, default=20, help="Number of results (default: 20)")
     parser.add_argument(
         "--sort",
         choices=["PRICE", "DURATION", "QUALITY"],
@@ -195,12 +175,8 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         default="table",
         help="Output format (default: table)",
     )
-    parser.add_argument(
-        "--output", "-o", type=str, help="Output file path (defaults to stdout)"
-    )
-    parser.add_argument(
-        "--discord", action="store_true", help="Send results to Discord webhook"
-    )
+    parser.add_argument("--output", "-o", type=str, help="Output file path (defaults to stdout)")
+    parser.add_argument("--discord", action="store_true", help="Send results to Discord webhook")
 
 
 def cmd_search(args: argparse.Namespace, console: Console) -> int:
@@ -497,6 +473,7 @@ def cmd_repl(console: Console) -> int:
 
                 hotels = []
                 from flightfinder.hotel_models import get_location_key
+
                 hotel_location = get_location_key(dest)
                 if hotel_location:
                     console.print(f"[dim]Searching hotels in {dest}...[/dim]")
@@ -555,7 +532,9 @@ def cmd_repl(console: Console) -> int:
             console.print(f"[dim]Cleared {cleared} cache entries[/dim]")
 
         else:
-            console.print(f"[yellow]Unknown command: {cmd}. Type 'help' for available commands.[/yellow]")
+            console.print(
+                f"[yellow]Unknown command: {cmd}. Type 'help' for available commands.[/yellow]"
+            )
 
     finder.close()
     return 0
@@ -585,7 +564,9 @@ def cmd_hotels(args: argparse.Namespace, console: Console) -> int:
             _output_hotels(results.hotels, args, console)
 
             if args.format == "table" and results.has_more:
-                console.print(f"\n[dim]Showing {len(results.hotels)} of {results.total_count} total results[/dim]")
+                console.print(
+                    f"\n[dim]Showing {len(results.hotels)} of {results.total_count} total results[/dim]"
+                )
 
             # Send to Discord if requested
             if getattr(args, "discord", False):
@@ -610,9 +591,13 @@ def cmd_trip(args: argparse.Namespace, console: Console) -> int:
         console.print(f"[dim]Depart around {departure_from}, stay {args.nights} nights[/dim]\n")
 
     # Check if destination is a valid hotel location
-    hotel_location = args.destination if args.destination.startswith("g") else get_location_key(args.destination)
+    hotel_location = (
+        args.destination if args.destination.startswith("g") else get_location_key(args.destination)
+    )
     if not hotel_location:
-        console.print(f"[yellow]Warning: '{args.destination}' is not a known hotel location.[/yellow]")
+        console.print(
+            f"[yellow]Warning: '{args.destination}' is not a known hotel location.[/yellow]"
+        )
         console.print("[dim]Use 'flights hotel-locations' to see supported cities.[/dim]\n")
         hotel_location = None
 
@@ -655,7 +640,9 @@ def cmd_trip(args: argparse.Namespace, console: Console) -> int:
 
         # Send to Discord if requested
         if getattr(args, "discord", False):
-            _send_trip_to_discord(args.origin, args.destination, flights, hotels, args.nights, console)
+            _send_trip_to_discord(
+                args.origin, args.destination, flights, hotels, args.nights, console
+            )
 
         return 0
 
@@ -709,7 +696,7 @@ def _output_trip(flights, hotels, args: argparse.Namespace, console: Console) ->
         table.add_column("Stops", justify="center")
         table.add_column("Airlines")
 
-        for f in flights[:args.limit]:
+        for f in flights[: args.limit]:
             out_date = f.outbound.departure_time.strftime("%b %d")
             in_date = f.inbound.departure_time.strftime("%b %d")
             table.add_row(
@@ -730,7 +717,7 @@ def _output_trip(flights, hotels, args: argparse.Namespace, console: Console) ->
         table.add_column("Rating", justify="center")
         table.add_column("Type")
 
-        for h in hotels[:args.limit]:
+        for h in hotels[: args.limit]:
             price_str = f"${h.min_price:.0f}" if h.min_price else "N/A"
             rating_str = f"{h.rating:.1f}/5" if h.rating else "N/A"
             table.add_row(
@@ -754,7 +741,9 @@ def _output_trip(flights, hotels, args: argparse.Namespace, console: Console) ->
 
             console.print("[bold]💰 Estimated Trip Cost[/bold]")
             console.print(f"  ✈️ Cheapest flight: ${min_flight:.0f}")
-            console.print(f"  🏨 Cheapest hotel: ${min_hotel:.0f}/night × {args.nights} nights = ${total_hotel:.0f}")
+            console.print(
+                f"  🏨 Cheapest hotel: ${min_hotel:.0f}/night × {args.nights} nights = ${total_hotel:.0f}"
+            )
             console.print(f"  [green bold]Total: ${estimated_total:.0f}[/green bold]")
 
 
@@ -768,7 +757,12 @@ def cmd_hotel_locations(console: Console) -> int:
 
     for city, key in sorted(LOCATION_KEYS.items()):
         # Simple heuristic: US cities have g3xxxx or g6xxxx keys typically
-        if key.startswith("g6") or key.startswith("g3") or key.startswith("g45") or key.startswith("g28"):
+        if (
+            key.startswith("g6")
+            or key.startswith("g3")
+            or key.startswith("g45")
+            or key.startswith("g28")
+        ):
             us_cities.append((city.title(), key))
         else:
             intl_cities.append((city.title(), key))
@@ -856,24 +850,36 @@ def _output_hotels(hotels, args: argparse.Namespace, console: Console) -> None:
 def _hotels_to_csv(hotels) -> str:
     """Convert hotels to CSV string."""
     import io
+
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow([
-        "key", "name", "type", "rating", "review_count",
-        "min_price", "max_price", "url", "mentions"
-    ])
+    writer.writerow(
+        [
+            "key",
+            "name",
+            "type",
+            "rating",
+            "review_count",
+            "min_price",
+            "max_price",
+            "url",
+            "mentions",
+        ]
+    )
     for h in hotels:
-        writer.writerow([
-            h.key,
-            h.name,
-            h.accommodation_type,
-            h.rating or "",
-            h.review_count or "",
-            h.min_price or "",
-            h.max_price or "",
-            h.url or "",
-            "|".join(h.mentions),
-        ])
+        writer.writerow(
+            [
+                h.key,
+                h.name,
+                h.accommodation_type,
+                h.rating or "",
+                h.review_count or "",
+                h.min_price or "",
+                h.max_price or "",
+                h.url or "",
+                "|".join(h.mentions),
+            ]
+        )
     return output.getvalue()
 
 
@@ -1008,11 +1014,21 @@ def _output_locations(locations, args: argparse.Namespace, console: Console) -> 
 
     elif args.format == "csv":
         import io
+
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["id", "name", "type", "city", "country", "country_code"])
         for loc in locations:
-            writer.writerow([loc.id, loc.name, loc.type, loc.city or "", loc.country or "", loc.country_code or ""])
+            writer.writerow(
+                [
+                    loc.id,
+                    loc.name,
+                    loc.type,
+                    loc.city or "",
+                    loc.country or "",
+                    loc.country_code or "",
+                ]
+            )
         _write_output(output.getvalue(), None, console)
 
     else:
@@ -1038,50 +1054,74 @@ def _output_locations(locations, args: argparse.Namespace, console: Console) -> 
 def _flights_to_csv(flights) -> str:
     """Convert flights to CSV string."""
     import io
+
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow([
-        "price", "origin", "destination", "departure_date", "departure_time",
-        "duration", "stops", "carriers"
-    ])
+    writer.writerow(
+        [
+            "price",
+            "origin",
+            "destination",
+            "departure_date",
+            "departure_time",
+            "duration",
+            "stops",
+            "carriers",
+        ]
+    )
     for f in flights:
-        writer.writerow([
-            f.price,
-            f.origin,
-            f.destination,
-            f.departure_time.strftime("%Y-%m-%d"),
-            f.departure_time.strftime("%H:%M"),
-            f.duration_formatted,
-            f.stops,
-            "|".join(f.carriers),
-        ])
+        writer.writerow(
+            [
+                f.price,
+                f.origin,
+                f.destination,
+                f.departure_time.strftime("%Y-%m-%d"),
+                f.departure_time.strftime("%H:%M"),
+                f.duration_formatted,
+                f.stops,
+                "|".join(f.carriers),
+            ]
+        )
     return output.getvalue()
 
 
 def _roundtrips_to_csv(roundtrips) -> str:
     """Convert round-trips to CSV string."""
     import io
+
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow([
-        "price", "price_with_bag", "origin", "destination", "destination_city",
-        "outbound_date", "inbound_date", "trip_days", "outbound_stops",
-        "inbound_stops", "carriers"
-    ])
+    writer.writerow(
+        [
+            "price",
+            "price_with_bag",
+            "origin",
+            "destination",
+            "destination_city",
+            "outbound_date",
+            "inbound_date",
+            "trip_days",
+            "outbound_stops",
+            "inbound_stops",
+            "carriers",
+        ]
+    )
     for rt in roundtrips:
-        writer.writerow([
-            rt.price,
-            rt.price_with_bag,
-            rt.origin,
-            rt.destination,
-            rt.destination_city or "",
-            rt.outbound.departure_time.strftime("%Y-%m-%d"),
-            rt.inbound.departure_time.strftime("%Y-%m-%d"),
-            rt.trip_days,
-            rt.outbound.stops,
-            rt.inbound.stops,
-            "|".join(rt.all_carriers),
-        ])
+        writer.writerow(
+            [
+                rt.price,
+                rt.price_with_bag,
+                rt.origin,
+                rt.destination,
+                rt.destination_city or "",
+                rt.outbound.departure_time.strftime("%Y-%m-%d"),
+                rt.inbound.departure_time.strftime("%Y-%m-%d"),
+                rt.trip_days,
+                rt.outbound.stops,
+                rt.inbound.stops,
+                "|".join(rt.all_carriers),
+            ]
+        )
     return output.getvalue()
 
 
@@ -1100,7 +1140,9 @@ def _send_flights_to_discord(flights, origin: str, destination: str, console: Co
     webhook_url = config.discord.webhook_url
 
     if not webhook_url:
-        console.print("[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]")
+        console.print(
+            "[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]"
+        )
         return
 
     console.print(f"\n[bold]Sending {len(flights)} flights to Discord...[/bold]")
@@ -1113,13 +1155,17 @@ def _send_flights_to_discord(flights, origin: str, destination: str, console: Co
         console.print(f"[red]Error sending to Discord: {e}[/red]")
 
 
-def _send_roundtrips_to_discord(roundtrips, origin: str, destination: str, console: Console) -> None:
+def _send_roundtrips_to_discord(
+    roundtrips, origin: str, destination: str, console: Console
+) -> None:
     """Send round-trip results to Discord webhook."""
     config = get_config()
     webhook_url = config.discord.webhook_url
 
     if not webhook_url:
-        console.print("[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]")
+        console.print(
+            "[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]"
+        )
         return
 
     console.print(f"\n[bold]Sending {len(roundtrips)} round-trips to Discord...[/bold]")
@@ -1132,13 +1178,17 @@ def _send_roundtrips_to_discord(roundtrips, origin: str, destination: str, conso
         console.print(f"[red]Error sending to Discord: {e}[/red]")
 
 
-def _send_hotels_to_discord(hotels, location: str, args: argparse.Namespace, console: Console) -> None:
+def _send_hotels_to_discord(
+    hotels, location: str, args: argparse.Namespace, console: Console
+) -> None:
     """Send hotel results to Discord webhook."""
     config = get_config()
     webhook_url = config.discord.webhook_url
 
     if not webhook_url:
-        console.print("[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]")
+        console.print(
+            "[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]"
+        )
         return
 
     console.print(f"\n[bold]Sending {len(hotels)} hotels to Discord...[/bold]")
@@ -1161,13 +1211,17 @@ def _send_hotels_to_discord(hotels, location: str, args: argparse.Namespace, con
         console.print(f"[red]Error sending to Discord: {e}[/red]")
 
 
-def _send_trip_to_discord(origin: str, destination: str, flights, hotels, nights: int, console: Console) -> None:
+def _send_trip_to_discord(
+    origin: str, destination: str, flights, hotels, nights: int, console: Console
+) -> None:
     """Send trip summary to Discord webhook."""
     config = get_config()
     webhook_url = config.discord.webhook_url
 
     if not webhook_url:
-        console.print("[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]")
+        console.print(
+            "[yellow]Discord webhook URL not configured. Set it in ~/.flightfinder/config.json[/yellow]"
+        )
         return
 
     console.print("\n[bold]Sending trip summary to Discord...[/bold]")
@@ -1244,6 +1298,7 @@ def cmd_mcp_server(console: Console) -> int:
         import asyncio
 
         from flightfinder.mcp_server import main as mcp_main
+
         asyncio.run(mcp_main())
         return 0
     except ImportError:

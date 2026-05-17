@@ -79,11 +79,13 @@ __all__ = [
 ]
 __version__ = "1.0.0"
 
+
 # Optional MCP server export (requires mcp package)
 def _load_mcp_server():
     """Load MCP server if available."""
     try:
         from flightfinder.mcp_server import create_server
+
         return create_server
     except ImportError:
         return None

@@ -79,8 +79,7 @@ def create_server():
         from mcp.types import Resource, TextContent, Tool
     except ImportError as err:
         raise ImportError(
-            "MCP support requires the 'mcp' package. "
-            "Install with: pip install flightfinder[mcp]"
+            "MCP support requires the 'mcp' package. Install with: pip install flightfinder[mcp]"
         ) from err
 
     from flightfinder.client import FlightFinder
@@ -96,6 +95,7 @@ def create_server():
             list_available_views,
             load_ui_bundle,
         )
+
         UI_ENABLED = is_ui_available()
     except ImportError:
         UI_ENABLED = False
@@ -406,7 +406,9 @@ def create_server():
                         "mimeType": RESOURCE_MIME_TYPE,
                     }
                     # Update the text content with the UI hint
-                    contents = [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+                    contents = [
+                        TextContent(type="text", text=json.dumps(result, indent=2, default=str))
+                    ]
 
             return contents
 
@@ -427,7 +429,9 @@ def create_server():
             dest_code, dest_note = _resolve_location(args["destination"], finder)
 
             flights = finder.search_flights(
-                origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                origin=origin_code.upper()
+                if origin_code.isalpha() and len(origin_code) == 3
+                else origin_code,
                 destination=dest_code,
                 departure_from=departure_from,
                 departure_to=departure_to,
@@ -480,7 +484,9 @@ def create_server():
             dest_code, dest_note = _resolve_location(args["destination"], finder)
 
             roundtrips = finder.search_roundtrip(
-                origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                origin=origin_code.upper()
+                if origin_code.isalpha() and len(origin_code) == 3
+                else origin_code,
                 destination=dest_code,
                 departure_from=departure_from,
                 departure_to=departure_to,
@@ -620,7 +626,9 @@ def create_server():
                 dest_code, dest_note = _resolve_location(destination, finder)
 
                 roundtrips = finder.search_roundtrip(
-                    origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                    origin=origin_code.upper()
+                    if origin_code.isalpha() and len(origin_code) == 3
+                    else origin_code,
                     destination=dest_code,
                     departure_from=departure_from,
                     departure_to=departure_to,
@@ -689,7 +697,9 @@ def create_server():
             except Exception as e:
                 result["hotel_error"] = str(e)
         else:
-            result["hotel_note"] = f"Hotel search not available for '{destination}'. Use a supported city name."
+            result["hotel_note"] = (
+                f"Hotel search not available for '{destination}'. Use a supported city name."
+            )
 
         # Calculate estimated total
         if result["flights"] and result["hotels"]:
@@ -731,4 +741,5 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())

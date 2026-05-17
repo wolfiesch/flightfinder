@@ -2,11 +2,10 @@
 
 import json
 import os
-import pytest
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
-from flightfinder.config import Config, APIConfig, CacheConfig, SearchDefaults
+from flightfinder.config import APIConfig, CacheConfig, Config, SearchDefaults
 
 
 class TestAPIConfig:

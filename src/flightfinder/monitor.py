@@ -173,7 +173,9 @@ class FlightMonitor:
             sys.exit(1)
 
         if not self.alert_manager.alerts:
-            logger.warning("No alerts configured. Set FLIGHTFINDER_ALERTS env var or add alerts to ~/.flightfinder/alerts.json")
+            logger.warning(
+                "No alerts configured. Set FLIGHTFINDER_ALERTS env var or add alerts to ~/.flightfinder/alerts.json"
+            )
 
         logger.info("Starting FlightFinder monitor...")
         logger.info(f"  Webhook: {self.webhook_url[:50]}...")
@@ -248,7 +250,9 @@ def main():
     interval = int(os.getenv("MONITOR_INTERVAL", config.monitor.interval_seconds))
     days_ahead = int(os.getenv("MONITOR_DAYS_AHEAD", config.monitor.days_ahead))
     search_window = int(os.getenv("MONITOR_SEARCH_WINDOW", config.monitor.search_window))
-    heartbeat_interval = int(os.getenv("MONITOR_HEARTBEAT_INTERVAL", config.monitor.heartbeat_interval))
+    heartbeat_interval = int(
+        os.getenv("MONITOR_HEARTBEAT_INTERVAL", config.monitor.heartbeat_interval)
+    )
 
     monitor = FlightMonitor(
         webhook_url=webhook_url,

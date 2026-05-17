@@ -47,6 +47,7 @@ def setup_debug_logging():
     logger.info("DEBUG MODE ENABLED - Verbose logging active")
     logger.info("=" * 60)
 
+
 # Default port for the HTTP server
 DEFAULT_PORT = 3001
 DEFAULT_HOST = "127.0.0.1"
@@ -173,7 +174,9 @@ def _matches_allowlist(value: str | None, allowed: Sequence[str]) -> bool:
     if value in allowed:
         return True
 
-    return any(pattern.endswith(":*") and value.startswith(f"{pattern[:-2]}:") for pattern in allowed)
+    return any(
+        pattern.endswith(":*") and value.startswith(f"{pattern[:-2]}:") for pattern in allowed
+    )
 
 
 def validate_host_header(host: str | None, settings: HTTPAccessSettings) -> bool:
@@ -241,7 +244,9 @@ def log_request_details(method: str, path: str, headers: dict, body: bytes | Non
                 body_json = json.loads(body_str)
                 logger.info(f">>> Body (JSON): {json.dumps(body_json, indent=2)}")
             except json.JSONDecodeError:
-                logger.info(f">>> Body (raw): {body_str[:500]}{'...' if len(body_str) > 500 else ''}")
+                logger.info(
+                    f">>> Body (raw): {body_str[:500]}{'...' if len(body_str) > 500 else ''}"
+                )
         except UnicodeDecodeError:
             logger.info(f">>> Body: <binary {len(body)} bytes>")
 
@@ -256,7 +261,9 @@ def log_response_details(status: int, headers: dict, body_preview: str = ""):
     for key, value in sorted(headers.items()):
         logger.info(f"    {key}: {value}")
     if body_preview:
-        logger.info(f"<<< Body preview: {body_preview[:200]}{'...' if len(body_preview) > 200 else ''}")
+        logger.info(
+            f"<<< Body preview: {body_preview[:200]}{'...' if len(body_preview) > 200 else ''}"
+        )
     logger.info("-" * 50)
 
 
@@ -324,13 +331,17 @@ def create_debug_middleware(app):
                 elif session_id and session_id in _active_sessions:
                     _active_sessions[session_id]["request_count"] += 1
 
-                logger.info(f"[TIMING] {request.method} {request.url.path} -> {response.status_code} ({elapsed:.2f}ms)")
+                logger.info(
+                    f"[TIMING] {request.method} {request.url.path} -> {response.status_code} ({elapsed:.2f}ms)"
+                )
 
                 return response
 
             except Exception as e:
                 elapsed = (time.time() - start_time) * 1000
-                logger.error(f"[ERROR] {request.method} {request.url.path} failed after {elapsed:.2f}ms")
+                logger.error(
+                    f"[ERROR] {request.method} {request.url.path} failed after {elapsed:.2f}ms"
+                )
                 logger.error(f"[ERROR] Exception: {type(e).__name__}: {e}")
                 logger.error(f"[ERROR] Stack trace:\n{traceback.format_exc()}")
                 raise
@@ -527,7 +538,9 @@ Use the city NAME (not code) for hotel searches.
             dest_code, dest_note = _resolve_location(destination, finder)
 
             flights = finder.search_flights(
-                origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                origin=origin_code.upper()
+                if origin_code.isalpha() and len(origin_code) == 3
+                else origin_code,
                 destination=dest_code,
                 departure_from=departure_from,
                 departure_to=departure_to,
@@ -603,7 +616,9 @@ Use the city NAME (not code) for hotel searches.
             dest_code, dest_note = _resolve_location(destination, finder)
 
             roundtrips = finder.search_roundtrip(
-                origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                origin=origin_code.upper()
+                if origin_code.isalpha() and len(origin_code) == 3
+                else origin_code,
                 destination=dest_code,
                 departure_from=departure_from,
                 departure_to=departure_to,
@@ -787,7 +802,9 @@ Use the city NAME (not code) for hotel searches.
                 dest_code, dest_note = _resolve_location(destination, finder)
 
                 roundtrips = finder.search_roundtrip(
-                    origin=origin_code.upper() if origin_code.isalpha() and len(origin_code) == 3 else origin_code,
+                    origin=origin_code.upper()
+                    if origin_code.isalpha() and len(origin_code) == 3
+                    else origin_code,
                     destination=dest_code,
                     departure_from=departure_from,
                     departure_to=departure_to,
@@ -904,15 +921,19 @@ Use the city NAME (not code) for hotel searches.
         if not DEBUG_MODE:
             return JSONResponse({"error": "Debug mode not enabled"}, status_code=403)
 
-        return JSONResponse({
-            "debug_mode": True,
-            "active_sessions": dict(_active_sessions),
-            "tools_registered": list(mcp._tools.keys()) if hasattr(mcp, "_tools") else "unknown",
-            "server_info": {
-                "name": "FlightFinder",
-                "transport": "streamable-http",
-            },
-        })
+        return JSONResponse(
+            {
+                "debug_mode": True,
+                "active_sessions": dict(_active_sessions),
+                "tools_registered": list(mcp._tools.keys())
+                if hasattr(mcp, "_tools")
+                else "unknown",
+                "server_info": {
+                    "name": "FlightFinder",
+                    "transport": "streamable-http",
+                },
+            }
+        )
 
     return mcp
 
@@ -930,7 +951,9 @@ def main():
         default=os.environ.get("FLIGHTFINDER_MCP_HOST", DEFAULT_HOST),
         help=f"Bind host (default: {DEFAULT_HOST}; set FLIGHTFINDER_MCP_HOST to override)",
     )
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port (default: {DEFAULT_PORT})")
+    parser.add_argument(
+        "--port", type=int, default=DEFAULT_PORT, help=f"Port (default: {DEFAULT_PORT})"
+    )
     parser.add_argument(
         "--allowed-host",
         action="append",
@@ -992,7 +1015,9 @@ def main():
     print(f"   Debug mode: {'ENABLED' if DEBUG_MODE else 'disabled'}")
     print("   Transport: Streamable HTTP")
     print("   DNS rebinding protection: ENABLED")
-    print(f"   API token required: {'yes' if access_settings.requires_token else 'no (loopback only)'}")
+    print(
+        f"   API token required: {'yes' if access_settings.requires_token else 'no (loopback only)'}"
+    )
     print(f"   Allowed hosts: {', '.join(access_settings.allowed_hosts)}")
     print(f"   Allowed origins: {', '.join(access_settings.allowed_origins)}")
     print("\nEndpoints:")

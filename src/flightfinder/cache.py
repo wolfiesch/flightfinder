@@ -92,9 +92,7 @@ class ResponseCache:
         logger.debug(f"Cache hit for key: {key[:8]}...")
         return entry.data
 
-    def set(
-        self, query: str, variables: dict, data: Any, ttl: int | None = None
-    ) -> None:
+    def set(self, query: str, variables: dict, data: Any, ttl: int | None = None) -> None:
         """
         Store a response in the cache.
 
@@ -151,9 +149,7 @@ class ResponseCache:
         Returns:
             Number of entries removed
         """
-        expired_keys = [
-            key for key, entry in self._cache.items() if entry.is_expired
-        ]
+        expired_keys = [key for key, entry in self._cache.items() if entry.is_expired]
         for key in expired_keys:
             del self._cache[key]
         if expired_keys:

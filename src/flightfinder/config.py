@@ -40,9 +40,7 @@ class SearchDefaults:
     limit: int = 100
     currency: str = "usd"
     locale: str = "en"
-    content_providers: list[str] = field(
-        default_factory=lambda: ["KIWI", "FRESH", "KAYAK"]
-    )
+    content_providers: list[str] = field(default_factory=lambda: ["KIWI", "FRESH", "KAYAK"])
 
 
 @dataclass

@@ -21,8 +21,10 @@ def test_loopback_bind_is_default_safe_without_token():
 
     assert settings.api_token is None
     assert validate_host_header("localhost:3001", settings)
+    assert validate_host_header("LOCALHOST:3001", settings)
     assert validate_host_header("127.0.0.1:3001", settings)
     assert validate_origin_header("http://localhost:3001", settings)
+    assert validate_origin_header("HTTP://LOCALHOST:3001", settings)
     assert not validate_host_header("evil.example.com", settings)
     assert not validate_origin_header("https://evil.example.com", settings)
 
@@ -63,14 +65,19 @@ def test_remote_bind_rejects_wildcard_allowlists():
 def test_remote_bind_allows_only_configured_host_origin_and_token():
     settings = build_http_access_settings(
         host="0.0.0.0",
-        allowed_hosts=["flightfinder.example.com"],
-        allowed_origins=["https://trusted.example.com"],
+        allowed_hosts=["FlightFinder.Example.com"],
+        allowed_origins=["https://Trusted.Example.com"],
         api_token="secret",
     )
 
     assert validate_host_header("flightfinder.example.com", settings)
+    assert validate_host_header("FLIGHTFINDER.EXAMPLE.COM:443", settings)
+    assert not validate_host_header("localhost", settings)
+    assert not validate_host_header("127.0.0.1", settings)
     assert not validate_host_header("evil.example.com", settings)
     assert validate_origin_header("https://trusted.example.com", settings)
+    assert validate_origin_header("HTTPS://TRUSTED.EXAMPLE.COM", settings)
+    assert not validate_origin_header("http://localhost:3001", settings)
     assert not validate_origin_header("https://evil.example.com", settings)
     assert validate_api_token({"authorization": "Bearer secret"}, settings)
     assert validate_api_token({"x-flightfinder-api-token": "secret"}, settings)

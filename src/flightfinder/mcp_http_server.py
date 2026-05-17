@@ -118,6 +118,10 @@ def _contains_wildcard(values: Sequence[str]) -> bool:
     return any(value.strip() == "*" for value in values)
 
 
+def _normalize_allowlist_values(values: Sequence[str]) -> list[str]:
+    return [value.lower() for value in values]
+
+
 def _env_token() -> str | None:
     for env_var in TOKEN_ENV_VARS:
         token = os.environ.get(env_var)
@@ -139,10 +143,13 @@ def build_http_access_settings(
     non-wildcard allowlists.
     """
 
-    extra_hosts = _split_csv_values(allowed_hosts)
-    extra_origins = _split_csv_values(allowed_origins)
-    resolved_hosts = _dedupe([*DEFAULT_ALLOWED_HOSTS, *extra_hosts])
-    resolved_origins = _dedupe([*DEFAULT_ALLOWED_ORIGINS, *extra_origins])
+    extra_hosts = _normalize_allowlist_values(_split_csv_values(allowed_hosts))
+    extra_origins = _normalize_allowlist_values(_split_csv_values(allowed_origins))
+    is_local_bind = _is_local_bind_host(host)
+    resolved_hosts = _dedupe([*(DEFAULT_ALLOWED_HOSTS if is_local_bind else []), *extra_hosts])
+    resolved_origins = _dedupe(
+        [*(DEFAULT_ALLOWED_ORIGINS if is_local_bind else []), *extra_origins]
+    )
     resolved_token = api_token or _env_token()
 
     if _contains_wildcard(resolved_hosts):
@@ -150,7 +157,7 @@ def build_http_access_settings(
     if _contains_wildcard(resolved_origins):
         raise ValueError("MCP HTTP allowed origins must be explicit; '*' is not allowed.")
 
-    if not _is_local_bind_host(host):
+    if not is_local_bind:
         if not resolved_token:
             env_names = " or ".join(TOKEN_ENV_VARS)
             raise ValueError(f"Remote MCP HTTP binds require {env_names}.")
@@ -167,10 +174,25 @@ def build_http_access_settings(
     )
 
 
+def _host_without_port(value: str) -> str:
+    if value.startswith("["):
+        end = value.find("]")
+        if end != -1:
+            return value[: end + 1]
+
+    if value.count(":") == 1:
+        host, port = value.rsplit(":", 1)
+        if port.isdigit():
+            return host
+
+    return value
+
+
 def _matches_allowlist(value: str | None, allowed: Sequence[str]) -> bool:
     if not value:
         return False
 
+    value = value.lower()
     if value in allowed:
         return True
 
@@ -180,7 +202,16 @@ def _matches_allowlist(value: str | None, allowed: Sequence[str]) -> bool:
 
 
 def validate_host_header(host: str | None, settings: HTTPAccessSettings) -> bool:
-    return _matches_allowlist(host, settings.allowed_hosts)
+    if _matches_allowlist(host, settings.allowed_hosts):
+        return True
+    if not host:
+        return False
+
+    hostname = _host_without_port(host.lower())
+    return any(
+        not allowed.endswith(":*") and _host_without_port(allowed) == hostname
+        for allowed in settings.allowed_hosts
+    )
 
 
 def validate_origin_header(origin: str | None, settings: HTTPAccessSettings) -> bool:

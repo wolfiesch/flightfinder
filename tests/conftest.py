@@ -1,14 +1,13 @@
 """Pytest fixtures for FlightFinder tests."""
 
-import pytest
 from datetime import datetime
-from unittest.mock import MagicMock, patch
 
-from flightfinder.client import FlightFinder
-from flightfinder.async_client import AsyncFlightFinder
-from flightfinder.config import Config
+import pytest
+
 from flightfinder.cache import ResponseCache
-from flightfinder.models import Flight, Location, RoundTrip, Segment
+from flightfinder.client import FlightFinder
+from flightfinder.config import Config
+from flightfinder.models import Flight, Location, Segment
 
 
 @pytest.fixture
@@ -189,7 +188,10 @@ def sample_roundtrip_response():
                                                 "name": "Los Angeles",
                                                 "city": {
                                                     "name": "Los Angeles",
-                                                    "country": {"code": "US", "name": "United States"},
+                                                    "country": {
+                                                        "code": "US",
+                                                        "name": "United States",
+                                                    },
                                                 },
                                             },
                                             "localTime": "2025-02-15T10:00:00",

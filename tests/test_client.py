@@ -1,16 +1,16 @@
 """Tests for FlightFinder client."""
 
-import pytest
 from datetime import date
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from flightfinder.client import FlightFinder
-from flightfinder.config import Config
 from flightfinder.exceptions import (
     APIError,
-    ValidationError,
     NetworkError,
     RateLimitError,
+    ValidationError,
 )
 
 
@@ -241,7 +241,6 @@ class TestErrorHandling:
 
     def test_rate_limit_error(self, client):
         """Test rate limit handling."""
-        import httpx
 
         mock_response = MagicMock()
         mock_response.status_code = 429

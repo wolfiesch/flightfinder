@@ -40,13 +40,17 @@ class AsyncFlightFinder:
             timeout: Optional timeout override (deprecated, use config).
         """
         self.config = config or get_config()
-        self._cache = cache if cache is not None else (
-            get_cache(
-                max_size=self.config.cache.max_size,
-                default_ttl=self.config.cache.ttl_seconds,
+        self._cache = (
+            cache
+            if cache is not None
+            else (
+                get_cache(
+                    max_size=self.config.cache.max_size,
+                    default_ttl=self.config.cache.ttl_seconds,
+                )
+                if self.config.cache.enabled
+                else None
             )
-            if self.config.cache.enabled
-            else None
         )
         self._client: httpx.AsyncClient | None = None
 
@@ -519,6 +523,7 @@ class AsyncFlightFinder:
         Returns:
             Dictionary mapping origin codes to flight lists
         """
+
         async def search_origin(origin: str) -> tuple[str, list[Flight]]:
             flights = await self.search_flights(
                 origin=origin,
@@ -601,16 +606,14 @@ class AsyncFlightFinder:
                 )
                 logger.error(f"HTTP error {e.response.status_code}: {e}")
                 if 400 <= e.response.status_code < 500:
-                    raise last_error
+                    raise last_error from e
 
             except Exception as e:
                 last_error = NetworkError(f"Unexpected error: {e}", original_error=e)
                 logger.error(f"Unexpected error on attempt {attempt + 1}: {e}")
 
             if attempt < self.config.api.max_retries - 1:
-                delay = self.config.api.retry_delay * (
-                    self.config.api.retry_backoff ** attempt
-                )
+                delay = self.config.api.retry_delay * (self.config.api.retry_backoff**attempt)
                 logger.debug(f"Retrying in {delay:.1f}s...")
                 await asyncio.sleep(delay)
 

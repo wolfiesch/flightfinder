@@ -1,23 +1,23 @@
 """Tests for HotelFinder client."""
 
-import pytest
-from datetime import date, timedelta
-from unittest.mock import patch, MagicMock
+from datetime import date
 
+import pytest
+
+from flightfinder.exceptions import ValidationError
 from flightfinder.hotel_client import HotelFinder
 from flightfinder.hotel_models import (
+    LOCATION_KEYS,
     Hotel,
-    HotelRate,
-    HotelRates,
-    HotelSearchResults,
     HotelLocation,
     HotelPriceRange,
+    HotelRate,
+    HotelRates,
     HotelReviewSummary,
+    HotelSearchResults,
     get_location_key,
     parse_location_key_from_url,
-    LOCATION_KEYS,
 )
-from flightfinder.exceptions import ValidationError, APIError
 
 
 class TestLocationKeyHelpers:

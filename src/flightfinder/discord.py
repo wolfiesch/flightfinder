@@ -188,28 +188,36 @@ class DiscordNotifier:
         embeds.append(self._build_roundtrip_summary_embed(roundtrip, search_context))
 
         # Outbound details
-        embeds.append(self._build_flight_embed(
-            roundtrip.outbound,
-            context=f"OUTBOUND: {roundtrip.origin} → {roundtrip.destination}",
-        ))
+        embeds.append(
+            self._build_flight_embed(
+                roundtrip.outbound,
+                context=f"OUTBOUND: {roundtrip.origin} → {roundtrip.destination}",
+            )
+        )
 
         if self.config.verbose_level in ("verbose", "ultra"):
             for i, segment in enumerate(roundtrip.outbound.segments):
-                embeds.append(self._build_segment_embed(
-                    segment, i + 1, len(roundtrip.outbound.segments), "Outbound"
-                ))
+                embeds.append(
+                    self._build_segment_embed(
+                        segment, i + 1, len(roundtrip.outbound.segments), "Outbound"
+                    )
+                )
 
         # Inbound details
-        embeds.append(self._build_flight_embed(
-            roundtrip.inbound,
-            context=f"RETURN: {roundtrip.destination} → {roundtrip.origin}",
-        ))
+        embeds.append(
+            self._build_flight_embed(
+                roundtrip.inbound,
+                context=f"RETURN: {roundtrip.destination} → {roundtrip.origin}",
+            )
+        )
 
         if self.config.verbose_level in ("verbose", "ultra"):
             for i, segment in enumerate(roundtrip.inbound.segments):
-                embeds.append(self._build_segment_embed(
-                    segment, i + 1, len(roundtrip.inbound.segments), "Return"
-                ))
+                embeds.append(
+                    self._build_segment_embed(
+                        segment, i + 1, len(roundtrip.inbound.segments), "Return"
+                    )
+                )
 
         # Value analysis (ultra mode)
         if self.config.verbose_level == "ultra":
@@ -254,9 +262,9 @@ class DiscordNotifier:
             return 0
 
         # Send search header
-        self._send_embeds([self._build_search_header_embed(
-            origin, destination, len(flights), search_params
-        )])
+        self._send_embeds(
+            [self._build_search_header_embed(origin, destination, len(flights), search_params)]
+        )
 
         sent_count = 0
 
@@ -342,9 +350,9 @@ class DiscordNotifier:
             return 0
 
         # Send search header
-        self._send_embeds([self._build_hotel_search_header_embed(
-            location, len(hotels), search_params
-        )])
+        self._send_embeds(
+            [self._build_hotel_search_header_embed(location, len(hotels), search_params)]
+        )
 
         sent_count = 0
 
@@ -356,12 +364,16 @@ class DiscordNotifier:
                 logger.error(f"Error sending hotel to Discord: {e}")
 
         # Send summary
-        self._send_embeds([{
-            "title": "✅ Hotel Search Complete",
-            "description": f"Sent **{sent_count}** hotel(s) in {location}",
-            "color": COLOR_STATUS,
-            "timestamp": datetime.utcnow().isoformat(),
-        }])
+        self._send_embeds(
+            [
+                {
+                    "title": "✅ Hotel Search Complete",
+                    "description": f"Sent **{sent_count}** hotel(s) in {location}",
+                    "color": COLOR_STATUS,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            ]
+        )
 
         return sent_count
 
@@ -416,41 +428,75 @@ class DiscordNotifier:
             {"name": "💰 Price", "value": f"${flight.price:.2f} {flight.currency}", "inline": True},
             {"name": "🎯 Stops", "value": flight.stops_label, "inline": True},
             {"name": "⏱️ Duration", "value": flight.duration_formatted, "inline": True},
-            {"name": "📅 Departure Date", "value": flight.departure_time.strftime("%A, %B %d, %Y"), "inline": True},
-            {"name": "🕐 Departure Time", "value": flight.departure_time.strftime("%I:%M %p"), "inline": True},
-            {"name": "🕐 Arrival Time", "value": flight.arrival_time.strftime("%I:%M %p"), "inline": True},
-            {"name": "🏙️ Origin", "value": f"{flight.origin}" + (f" ({flight.origin_city})" if flight.origin_city else ""), "inline": True},
-            {"name": "🏙️ Destination", "value": f"{flight.destination}" + (f" ({flight.destination_city})" if flight.destination_city else ""), "inline": True},
-            {"name": "✈️ Airlines", "value": ", ".join(flight.carriers) if flight.carriers else "Unknown", "inline": True},
+            {
+                "name": "📅 Departure Date",
+                "value": flight.departure_time.strftime("%A, %B %d, %Y"),
+                "inline": True,
+            },
+            {
+                "name": "🕐 Departure Time",
+                "value": flight.departure_time.strftime("%I:%M %p"),
+                "inline": True,
+            },
+            {
+                "name": "🕐 Arrival Time",
+                "value": flight.arrival_time.strftime("%I:%M %p"),
+                "inline": True,
+            },
+            {
+                "name": "🏙️ Origin",
+                "value": f"{flight.origin}"
+                + (f" ({flight.origin_city})" if flight.origin_city else ""),
+                "inline": True,
+            },
+            {
+                "name": "🏙️ Destination",
+                "value": f"{flight.destination}"
+                + (f" ({flight.destination_city})" if flight.destination_city else ""),
+                "inline": True,
+            },
+            {
+                "name": "✈️ Airlines",
+                "value": ", ".join(flight.carriers) if flight.carriers else "Unknown",
+                "inline": True,
+            },
         ]
 
         # Layover info if applicable
         if flight.stops > 0:
-            fields.append({
-                "name": "🔄 Layover Airports",
-                "value": ", ".join(flight.layover_airports) or "N/A",
-                "inline": True
-            })
-            fields.append({
-                "name": "⏳ Total Layover Time",
-                "value": flight.layover_duration_formatted or "N/A",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "🔄 Layover Airports",
+                    "value": ", ".join(flight.layover_airports) or "N/A",
+                    "inline": True,
+                }
+            )
+            fields.append(
+                {
+                    "name": "⏳ Total Layover Time",
+                    "value": flight.layover_duration_formatted or "N/A",
+                    "inline": True,
+                }
+            )
 
         # Booking link (only include if it's a full URL)
         if flight.deep_link and flight.deep_link.startswith("http"):
-            fields.append({
-                "name": "🔗 Book Now",
-                "value": f"[Click to Book]({flight.deep_link})",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "🔗 Book Now",
+                    "value": f"[Click to Book]({flight.deep_link})",
+                    "inline": True,
+                }
+            )
 
         # Flight ID
-        fields.append({
-            "name": "🆔 Flight ID",
-            "value": f"`{flight.id[:20]}...`" if len(flight.id) > 20 else f"`{flight.id}`",
-            "inline": True
-        })
+        fields.append(
+            {
+                "name": "🆔 Flight ID",
+                "value": f"`{flight.id[:20]}...`" if len(flight.id) > 20 else f"`{flight.id}`",
+                "inline": True,
+            }
+        )
 
         embed = {
             "title": title,
@@ -485,21 +531,29 @@ class DiscordNotifier:
         fields = [
             {"name": "🛫 Carrier", "value": carrier_info, "inline": True},
             {"name": "💺 Cabin Class", "value": segment.cabin_class or "Economy", "inline": True},
-            {"name": "⏱️ Duration", "value": f"{segment.duration_minutes // 60}h {segment.duration_minutes % 60}m", "inline": True},
+            {
+                "name": "⏱️ Duration",
+                "value": f"{segment.duration_minutes // 60}h {segment.duration_minutes % 60}m",
+                "inline": True,
+            },
             {
                 "name": "🛫 Departure",
-                "value": f"**{segment.origin}**" + (f"\n{segment.origin_name}" if segment.origin_name else "") + f"\n{segment.departure_time.strftime('%I:%M %p')}",
-                "inline": True
+                "value": f"**{segment.origin}**"
+                + (f"\n{segment.origin_name}" if segment.origin_name else "")
+                + f"\n{segment.departure_time.strftime('%I:%M %p')}",
+                "inline": True,
             },
             {
                 "name": "🛬 Arrival",
-                "value": f"**{segment.destination}**" + (f"\n{segment.destination_name}" if segment.destination_name else "") + f"\n{segment.arrival_time.strftime('%I:%M %p')}",
-                "inline": True
+                "value": f"**{segment.destination}**"
+                + (f"\n{segment.destination_name}" if segment.destination_name else "")
+                + f"\n{segment.arrival_time.strftime('%I:%M %p')}",
+                "inline": True,
             },
             {
                 "name": "📅 Date",
                 "value": segment.departure_time.strftime("%b %d, %Y"),
-                "inline": True
+                "inline": True,
             },
         ]
 
@@ -517,7 +571,9 @@ class DiscordNotifier:
             current_seg = flight.segments[i]
             next_seg = flight.segments[i + 1]
 
-            layover_mins = int((next_seg.departure_time - current_seg.arrival_time).total_seconds() / 60)
+            layover_mins = int(
+                (next_seg.departure_time - current_seg.arrival_time).total_seconds() / 60
+            )
             hours = layover_mins // 60
             mins = layover_mins % 60
 
@@ -530,9 +586,21 @@ class DiscordNotifier:
                 "fields": [
                     {"name": "🏢 Airport", "value": airport_name, "inline": True},
                     {"name": "⏳ Layover Time", "value": f"{hours}h {mins}m", "inline": True},
-                    {"name": "🛬 Arrive", "value": current_seg.arrival_time.strftime("%I:%M %p"), "inline": True},
-                    {"name": "🛫 Depart", "value": next_seg.departure_time.strftime("%I:%M %p"), "inline": True},
-                    {"name": "📅 Date", "value": current_seg.arrival_time.strftime("%b %d"), "inline": True},
+                    {
+                        "name": "🛬 Arrive",
+                        "value": current_seg.arrival_time.strftime("%I:%M %p"),
+                        "inline": True,
+                    },
+                    {
+                        "name": "🛫 Depart",
+                        "value": next_seg.departure_time.strftime("%I:%M %p"),
+                        "inline": True,
+                    },
+                    {
+                        "name": "📅 Date",
+                        "value": current_seg.arrival_time.strftime("%b %d"),
+                        "inline": True,
+                    },
                 ],
             }
             embeds.append(embed)
@@ -559,46 +627,70 @@ class DiscordNotifier:
         int_status = "🌍 International" if roundtrip.is_international else "🏠 Domestic"
 
         fields = [
-            {"name": "💰 Total Price", "value": f"${roundtrip.price:.2f} {roundtrip.currency}", "inline": True},
+            {
+                "name": "💰 Total Price",
+                "value": f"${roundtrip.price:.2f} {roundtrip.currency}",
+                "inline": True,
+            },
             {"name": "📅 Trip Dates", "value": f"{out_date} → {in_date}", "inline": True},
             {"name": "📆 Duration", "value": f"{roundtrip.trip_days} days", "inline": True},
             {"name": "🏙️ Destination", "value": dest_info, "inline": True},
             {"name": "🌐 Trip Type", "value": int_status, "inline": True},
-            {"name": "✈️ All Airlines", "value": ", ".join(roundtrip.all_carriers) or "Unknown", "inline": True},
-            {"name": "⏱️ Total Flight Time", "value": roundtrip.total_travel_formatted, "inline": True},
-            {"name": "🛫 Outbound", "value": f"{roundtrip.outbound.stops_label} • {roundtrip.outbound.duration_formatted}", "inline": True},
-            {"name": "🛬 Return", "value": f"{roundtrip.inbound.stops_label} • {roundtrip.inbound.duration_formatted}", "inline": True},
+            {
+                "name": "✈️ All Airlines",
+                "value": ", ".join(roundtrip.all_carriers) or "Unknown",
+                "inline": True,
+            },
+            {
+                "name": "⏱️ Total Flight Time",
+                "value": roundtrip.total_travel_formatted,
+                "inline": True,
+            },
+            {
+                "name": "🛫 Outbound",
+                "value": f"{roundtrip.outbound.stops_label} • {roundtrip.outbound.duration_formatted}",
+                "inline": True,
+            },
+            {
+                "name": "🛬 Return",
+                "value": f"{roundtrip.inbound.stops_label} • {roundtrip.inbound.duration_formatted}",
+                "inline": True,
+            },
         ]
 
         # Baggage info
         if roundtrip.checked_bag_price:
-            fields.append({
-                "name": "🧳 Checked Bag",
-                "value": f"+${roundtrip.checked_bag_price:.0f}",
-                "inline": True
-            })
-            fields.append({
-                "name": "💵 Total with Bag",
-                "value": f"${roundtrip.price_with_bag:.0f}",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "🧳 Checked Bag",
+                    "value": f"+${roundtrip.checked_bag_price:.0f}",
+                    "inline": True,
+                }
+            )
+            fields.append(
+                {
+                    "name": "💵 Total with Bag",
+                    "value": f"${roundtrip.price_with_bag:.0f}",
+                    "inline": True,
+                }
+            )
 
         # Booking link (only include if it's a full URL)
         if roundtrip.booking_url and roundtrip.booking_url.startswith("http"):
-            fields.append({
-                "name": "🔗 Book Now",
-                "value": f"[Click to Book]({roundtrip.booking_url})",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "🔗 Book Now",
+                    "value": f"[Click to Book]({roundtrip.booking_url})",
+                    "inline": True,
+                }
+            )
 
         # Layovers summary
         all_layovers = roundtrip.all_layover_airports
         if all_layovers:
-            fields.append({
-                "name": "🔄 All Connections",
-                "value": ", ".join(all_layovers),
-                "inline": True
-            })
+            fields.append(
+                {"name": "🔄 All Connections", "value": ", ".join(all_layovers), "inline": True}
+            )
 
         embed = {
             "title": title,
@@ -617,38 +709,54 @@ class DiscordNotifier:
         """Build a value analysis embed for round-trips."""
         fields = [
             {"name": "💰 Total Price", "value": f"${roundtrip.price:.2f}", "inline": True},
-            {"name": "📊 Price Per Day", "value": f"${roundtrip.price_per_day:.2f}/day", "inline": True},
+            {
+                "name": "📊 Price Per Day",
+                "value": f"${roundtrip.price_per_day:.2f}/day",
+                "inline": True,
+            },
             {"name": "📆 Trip Length", "value": f"{roundtrip.trip_days} days", "inline": True},
-            {"name": "⏱️ Total Flight Time", "value": f"{roundtrip.total_travel_minutes} mins ({roundtrip.total_travel_formatted})", "inline": True},
+            {
+                "name": "⏱️ Total Flight Time",
+                "value": f"{roundtrip.total_travel_minutes} mins ({roundtrip.total_travel_formatted})",
+                "inline": True,
+            },
             {"name": "🛫 Outbound Stops", "value": f"{roundtrip.outbound.stops}", "inline": True},
             {"name": "🛬 Return Stops", "value": f"{roundtrip.inbound.stops}", "inline": True},
         ]
 
         if roundtrip.checked_bag_price:
-            fields.append({
-                "name": "🧳 Bag Price",
-                "value": f"${roundtrip.checked_bag_price:.0f}",
-                "inline": True
-            })
-            fields.append({
-                "name": "💵 Price with Bag",
-                "value": f"${roundtrip.price_with_bag:.0f}",
-                "inline": True
-            })
-            ppd_with_bag = roundtrip.price_with_bag / roundtrip.trip_days if roundtrip.trip_days > 0 else roundtrip.price_with_bag
-            fields.append({
-                "name": "📊 $/Day with Bag",
-                "value": f"${ppd_with_bag:.2f}/day",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "🧳 Bag Price",
+                    "value": f"${roundtrip.checked_bag_price:.0f}",
+                    "inline": True,
+                }
+            )
+            fields.append(
+                {
+                    "name": "💵 Price with Bag",
+                    "value": f"${roundtrip.price_with_bag:.0f}",
+                    "inline": True,
+                }
+            )
+            ppd_with_bag = (
+                roundtrip.price_with_bag / roundtrip.trip_days
+                if roundtrip.trip_days > 0
+                else roundtrip.price_with_bag
+            )
+            fields.append(
+                {"name": "📊 $/Day with Bag", "value": f"${ppd_with_bag:.2f}/day", "inline": True}
+            )
 
         # Country info
         if roundtrip.destination_country:
-            fields.append({
-                "name": "🌍 Destination Country",
-                "value": roundtrip.destination_country,
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "🌍 Destination Country",
+                    "value": roundtrip.destination_country,
+                    "inline": True,
+                }
+            )
 
         return {
             "title": "📈 Value Analysis",
@@ -677,30 +785,52 @@ class DiscordNotifier:
         fields = [
             {"name": "🎯 Your Max Price", "value": f"${alert.max_price:.0f}", "inline": True},
             {"name": "💰 Current Price", "value": f"${flight.price:.0f}", "inline": True},
-            {"name": "💵 You Save", "value": f"${match.price_delta:.0f} ({savings_pct:.1f}%)", "inline": True},
+            {
+                "name": "💵 You Save",
+                "value": f"${match.price_delta:.0f} ({savings_pct:.1f}%)",
+                "inline": True,
+            },
         ]
 
         if isinstance(flight, RoundTrip):
-            fields.extend([
-                {"name": "📅 Dates", "value": f"{flight.outbound.departure_time.strftime('%b %d')} - {flight.inbound.departure_time.strftime('%b %d')}", "inline": True},
-                {"name": "📆 Trip Length", "value": f"{flight.trip_days} days", "inline": True},
-                {"name": "📊 Price/Day", "value": f"${flight.price_per_day:.2f}", "inline": True},
-            ])
+            fields.extend(
+                [
+                    {
+                        "name": "📅 Dates",
+                        "value": f"{flight.outbound.departure_time.strftime('%b %d')} - {flight.inbound.departure_time.strftime('%b %d')}",
+                        "inline": True,
+                    },
+                    {"name": "📆 Trip Length", "value": f"{flight.trip_days} days", "inline": True},
+                    {
+                        "name": "📊 Price/Day",
+                        "value": f"${flight.price_per_day:.2f}",
+                        "inline": True,
+                    },
+                ]
+            )
         else:
-            fields.extend([
-                {"name": "📅 Date", "value": flight.departure_time.strftime("%b %d, %Y"), "inline": True},
-                {"name": "⏱️ Duration", "value": flight.duration_formatted, "inline": True},
-                {"name": "🎯 Stops", "value": flight.stops_label, "inline": True},
-            ])
+            fields.extend(
+                [
+                    {
+                        "name": "📅 Date",
+                        "value": flight.departure_time.strftime("%b %d, %Y"),
+                        "inline": True,
+                    },
+                    {"name": "⏱️ Duration", "value": flight.duration_formatted, "inline": True},
+                    {"name": "🎯 Stops", "value": flight.stops_label, "inline": True},
+                ]
+            )
 
         # Booking link (only include if it's a full URL)
         booking_url = flight.booking_url if isinstance(flight, RoundTrip) else flight.deep_link
         if booking_url and booking_url.startswith("http"):
-            fields.append({
-                "name": "🔗 Book Now",
-                "value": f"[**BOOK THIS DEAL**]({booking_url})",
-                "inline": False
-            })
+            fields.append(
+                {
+                    "name": "🔗 Book Now",
+                    "value": f"[**BOOK THIS DEAL**]({booking_url})",
+                    "inline": False,
+                }
+            )
 
         return {
             "title": title,
@@ -730,11 +860,25 @@ class DiscordNotifier:
 
         if search_params:
             if "max_price" in search_params:
-                fields.append({"name": "💰 Max Price", "value": f"${search_params['max_price']}", "inline": True})
+                fields.append(
+                    {
+                        "name": "💰 Max Price",
+                        "value": f"${search_params['max_price']}",
+                        "inline": True,
+                    }
+                )
             if "max_stops" in search_params:
-                fields.append({"name": "🔄 Max Stops", "value": str(search_params['max_stops']), "inline": True})
+                fields.append(
+                    {
+                        "name": "🔄 Max Stops",
+                        "value": str(search_params["max_stops"]),
+                        "inline": True,
+                    }
+                )
             if "cabin_class" in search_params:
-                fields.append({"name": "💺 Cabin", "value": search_params['cabin_class'], "inline": True})
+                fields.append(
+                    {"name": "💺 Cabin", "value": search_params["cabin_class"], "inline": True}
+                )
 
         return {
             "title": title,
@@ -770,7 +914,9 @@ class DiscordNotifier:
         alert_lines = []
         for i, alert in enumerate(alerts, 1):
             name = alert.name or f"Alert {i}"
-            alert_lines.append(f"• **{name}**: {alert.origin} → {alert.destination} ≤${alert.max_price:.0f}")
+            alert_lines.append(
+                f"• **{name}**: {alert.origin} → {alert.destination} ≤${alert.max_price:.0f}"
+            )
 
         alerts_text = "\n".join(alert_lines) if alert_lines else "No alerts configured"
 
@@ -780,24 +926,16 @@ class DiscordNotifier:
         ]
 
         if last_check:
-            fields.append({
-                "name": "🕐 Last Check",
-                "value": last_check.strftime("%I:%M %p"),
-                "inline": True
-            })
+            fields.append(
+                {"name": "🕐 Last Check", "value": last_check.strftime("%I:%M %p"), "inline": True}
+            )
 
         if next_check:
-            fields.append({
-                "name": "⏰ Next Check",
-                "value": next_check.strftime("%I:%M %p"),
-                "inline": True
-            })
+            fields.append(
+                {"name": "⏰ Next Check", "value": next_check.strftime("%I:%M %p"), "inline": True}
+            )
 
-        fields.append({
-            "name": "📜 Alert Details",
-            "value": alerts_text,
-            "inline": False
-        })
+        fields.append({"name": "📜 Alert Details", "value": alerts_text, "inline": False})
 
         return {
             "title": "📊 FlightFinder Monitor Status",
@@ -825,12 +963,6 @@ class DiscordNotifier:
             elif hotel.rating >= 4.0:
                 color = COLOR_HOTEL_GOOD
 
-        # Title with rating stars
-        rating_stars = ""
-        if hotel.rating:
-            full_stars = int(hotel.rating)
-            rating_stars = "⭐" * full_stars
-
         title = f"🏨 {hotel.name}"
 
         # Price range
@@ -854,50 +986,46 @@ class DiscordNotifier:
 
         if hotel.rating:
             rating_label = hotel.review_summary.rating_label if hotel.review_summary else ""
-            fields.append({
-                "name": "⭐ Rating",
-                "value": f"{hotel.rating:.1f}/5 ({rating_label})",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "⭐ Rating",
+                    "value": f"{hotel.rating:.1f}/5 ({rating_label})",
+                    "inline": True,
+                }
+            )
 
         if hotel.review_count:
-            fields.append({
-                "name": "📝 Reviews",
-                "value": f"{hotel.review_count:,}",
-                "inline": True
-            })
+            fields.append(
+                {"name": "📝 Reviews", "value": f"{hotel.review_count:,}", "inline": True}
+            )
 
         # Tags/mentions
         if hotel.mentions:
             tags = ", ".join(hotel.mentions[:5])
-            fields.append({
-                "name": "🏷️ Features",
-                "value": tags,
-                "inline": True
-            })
+            fields.append({"name": "🏷️ Features", "value": tags, "inline": True})
 
         # Location (coordinates)
         if hotel.location:
-            fields.append({
-                "name": "📍 Coordinates",
-                "value": f"{hotel.location.latitude:.4f}, {hotel.location.longitude:.4f}",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "📍 Coordinates",
+                    "value": f"{hotel.location.latitude:.4f}, {hotel.location.longitude:.4f}",
+                    "inline": True,
+                }
+            )
 
         # TripAdvisor link (only include if it's a full URL)
         if hotel.url and hotel.url.startswith("http"):
-            fields.append({
-                "name": "🔗 View on TripAdvisor",
-                "value": f"[Click to View]({hotel.url})",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "🔗 View on TripAdvisor",
+                    "value": f"[Click to View]({hotel.url})",
+                    "inline": True,
+                }
+            )
 
         # Hotel key for reference
-        fields.append({
-            "name": "🆔 Hotel Key",
-            "value": f"`{hotel.key}`",
-            "inline": True
-        })
+        fields.append({"name": "🆔 Hotel Key", "value": f"`{hotel.key}`", "inline": True})
 
         embed = {
             "title": title,
@@ -932,13 +1060,31 @@ class DiscordNotifier:
 
         if search_params:
             if "min_price" in search_params:
-                fields.append({"name": "💰 Min Price", "value": f"${search_params['min_price']}", "inline": True})
+                fields.append(
+                    {
+                        "name": "💰 Min Price",
+                        "value": f"${search_params['min_price']}",
+                        "inline": True,
+                    }
+                )
             if "max_price" in search_params:
-                fields.append({"name": "💰 Max Price", "value": f"${search_params['max_price']}", "inline": True})
+                fields.append(
+                    {
+                        "name": "💰 Max Price",
+                        "value": f"${search_params['max_price']}",
+                        "inline": True,
+                    }
+                )
             if "min_rating" in search_params:
-                fields.append({"name": "⭐ Min Rating", "value": f"{search_params['min_rating']}/5", "inline": True})
+                fields.append(
+                    {
+                        "name": "⭐ Min Rating",
+                        "value": f"{search_params['min_rating']}/5",
+                        "inline": True,
+                    }
+                )
             if "type" in search_params:
-                fields.append({"name": "🏢 Type", "value": search_params['type'], "inline": True})
+                fields.append({"name": "🏢 Type", "value": search_params["type"], "inline": True})
 
         return {
             "title": title,
@@ -984,30 +1130,30 @@ class DiscordNotifier:
         ]
 
         if min_flight > 0:
-            fields.append({
-                "name": "✈️ Cheapest Flight",
-                "value": f"${min_flight:.0f}",
-                "inline": True
-            })
+            fields.append(
+                {"name": "✈️ Cheapest Flight", "value": f"${min_flight:.0f}", "inline": True}
+            )
 
         if min_hotel > 0:
-            fields.append({
-                "name": "🏨 Cheapest Hotel/Night",
-                "value": f"${min_hotel:.0f}",
-                "inline": True
-            })
-            fields.append({
-                "name": f"🏨 Hotel Total ({nights} nights)",
-                "value": f"${total_hotel:.0f}",
-                "inline": True
-            })
+            fields.append(
+                {"name": "🏨 Cheapest Hotel/Night", "value": f"${min_hotel:.0f}", "inline": True}
+            )
+            fields.append(
+                {
+                    "name": f"🏨 Hotel Total ({nights} nights)",
+                    "value": f"${total_hotel:.0f}",
+                    "inline": True,
+                }
+            )
 
         if estimated_total > 0:
-            fields.append({
-                "name": "💰 Estimated Trip Cost",
-                "value": f"**${estimated_total:.0f}**",
-                "inline": False
-            })
+            fields.append(
+                {
+                    "name": "💰 Estimated Trip Cost",
+                    "value": f"**${estimated_total:.0f}**",
+                    "inline": False,
+                }
+            )
 
         # Top flight options
         if flights:
@@ -1018,11 +1164,13 @@ class DiscordNotifier:
                     flight_lines.append(f"${f.price:.0f} ({f.trip_days} days)")
                 else:
                     flight_lines.append(f"${f.price:.0f} ({f.stops_label})")
-            fields.append({
-                "name": "✈️ Top Flight Deals",
-                "value": "\n".join(flight_lines) or "N/A",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "✈️ Top Flight Deals",
+                    "value": "\n".join(flight_lines) or "N/A",
+                    "inline": True,
+                }
+            )
 
         # Top hotel options
         if hotels:
@@ -1032,11 +1180,13 @@ class DiscordNotifier:
                 price_str = f"${h.min_price:.0f}/night" if h.min_price else "N/A"
                 rating_str = f"{h.rating:.1f}⭐" if h.rating else ""
                 hotel_lines.append(f"{price_str} {rating_str} {h.name[:25]}...")
-            fields.append({
-                "name": "🏨 Top Hotel Deals",
-                "value": "\n".join(hotel_lines) or "N/A",
-                "inline": True
-            })
+            fields.append(
+                {
+                    "name": "🏨 Top Hotel Deals",
+                    "value": "\n".join(hotel_lines) or "N/A",
+                    "inline": True,
+                }
+            )
 
         return {
             "title": title,
@@ -1081,7 +1231,7 @@ class DiscordNotifier:
 
         # Discord limit: 10 embeds per message
         for i in range(0, len(embeds), 10):
-            batch = embeds[i:i + 10]
+            batch = embeds[i : i + 10]
             payload = {"embeds": batch}
 
             try:

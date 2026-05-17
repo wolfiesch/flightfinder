@@ -1,7 +1,6 @@
 """Custom exceptions for FlightFinder."""
 
 
-
 class FlightFinderError(Exception):
     """Base exception for all FlightFinder errors."""
 

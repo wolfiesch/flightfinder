@@ -53,9 +53,7 @@ class HotelFinder:
         self.max_retries = max_retries
         self._client: httpx.Client | None = None
         self._cache: ResponseCache | None = (
-            get_cache(max_size=100, default_ttl=cache_ttl)
-            if cache_enabled
-            else None
+            get_cache(max_size=100, default_ttl=cache_ttl) if cache_enabled else None
         )
 
         logger.debug(
@@ -219,10 +217,7 @@ class HotelFinder:
         rooms = min(rooms, 8)
         adults = min(adults, 32)
 
-        logger.info(
-            f"Getting rates for hotel: {hotel_key}, "
-            f"dates: {check_in} to {check_out}"
-        )
+        logger.info(f"Getting rates for hotel: {hotel_key}, dates: {check_in} to {check_out}")
 
         params = {
             "hotel_key": hotel_key,
@@ -340,8 +335,6 @@ class HotelFinder:
         Returns:
             API response as dictionary
         """
-        cache_key = f"{endpoint}:{str(sorted(params.items()))}"
-
         # Check cache
         if self._cache:
             cached = self._cache.get(endpoint, params)
@@ -402,7 +395,7 @@ class HotelFinder:
                 logger.error(f"HTTP error {e.response.status_code}: {e}")
                 # Don't retry client errors
                 if 400 <= e.response.status_code < 500:
-                    raise last_error
+                    raise last_error from e
 
             except Exception as e:
                 last_error = NetworkError(f"Unexpected error: {e}", original_error=e)
@@ -410,7 +403,7 @@ class HotelFinder:
 
             # Exponential backoff
             if attempt < self.max_retries - 1:
-                delay = 1.0 * (2.0 ** attempt)
+                delay = 1.0 * (2.0**attempt)
                 logger.debug(f"Retrying in {delay:.1f}s...")
                 time.sleep(delay)
 

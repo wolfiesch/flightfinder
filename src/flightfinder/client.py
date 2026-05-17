@@ -40,13 +40,17 @@ class FlightFinder:
             timeout: Optional timeout override (deprecated, use config).
         """
         self.config = config or get_config()
-        self._cache = cache if cache is not None else (
-            get_cache(
-                max_size=self.config.cache.max_size,
-                default_ttl=self.config.cache.ttl_seconds,
+        self._cache = (
+            cache
+            if cache is not None
+            else (
+                get_cache(
+                    max_size=self.config.cache.max_size,
+                    default_ttl=self.config.cache.ttl_seconds,
+                )
+                if self.config.cache.enabled
+                else None
             )
-            if self.config.cache.enabled
-            else None
         )
         self._client: httpx.Client | None = None
 
@@ -652,9 +656,7 @@ class FlightFinder:
             segments=segments,
         )
 
-    def _execute_query(
-        self, query: str, variables: dict, feature_name: str | None = None
-    ) -> dict:
+    def _execute_query(self, query: str, variables: dict, feature_name: str | None = None) -> dict:
         """
         Execute a GraphQL query with retry logic and caching.
 
@@ -731,7 +733,7 @@ class FlightFinder:
                 logger.error(f"HTTP error {e.response.status_code}: {e}")
                 # Don't retry client errors (4xx except 429)
                 if 400 <= e.response.status_code < 500:
-                    raise last_error
+                    raise last_error from e
 
             except Exception as e:
                 last_error = NetworkError(f"Unexpected error: {e}", original_error=e)
@@ -739,9 +741,7 @@ class FlightFinder:
 
             # Exponential backoff before retry
             if attempt < self.config.api.max_retries - 1:
-                delay = self.config.api.retry_delay * (
-                    self.config.api.retry_backoff ** attempt
-                )
+                delay = self.config.api.retry_delay * (self.config.api.retry_backoff**attempt)
                 logger.debug(f"Retrying in {delay:.1f}s...")
                 time.sleep(delay)
 

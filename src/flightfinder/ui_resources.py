@@ -62,9 +62,7 @@ def load_ui_bundle(view: str, data: dict[str, Any]) -> str:
         FileNotFoundError: If the HTML bundle doesn't exist.
     """
     if view not in UI_VIEWS:
-        raise ValueError(
-            f"Invalid view '{view}'. Valid views: {list(UI_VIEWS.keys())}"
-        )
+        raise ValueError(f"Invalid view '{view}'. Valid views: {list(UI_VIEWS.keys())}")
 
     dist_path = get_ui_dist_path()
     html_path = dist_path / UI_VIEWS[view]
@@ -148,9 +146,6 @@ def list_available_views() -> list[str]:
     """
     try:
         dist_path = get_ui_dist_path()
-        return [
-            view for view, filename in UI_VIEWS.items()
-            if (dist_path / filename).exists()
-        ]
+        return [view for view, filename in UI_VIEWS.items() if (dist_path / filename).exists()]
     except FileNotFoundError:
         return []

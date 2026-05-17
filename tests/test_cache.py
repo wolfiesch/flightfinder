@@ -1,8 +1,8 @@
 """Tests for FlightFinder caching."""
 
-import pytest
 import time
-from flightfinder.cache import ResponseCache, CacheEntry
+
+from flightfinder.cache import CacheEntry, ResponseCache
 
 
 class TestCacheEntry:

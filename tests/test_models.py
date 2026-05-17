@@ -1,9 +1,8 @@
 """Tests for FlightFinder data models."""
 
-import pytest
 from datetime import datetime
 
-from flightfinder.models import Location, Segment, Flight, RoundTrip, Itinerary
+from flightfinder.models import Flight, Location, RoundTrip, Segment
 
 
 class TestLocation:

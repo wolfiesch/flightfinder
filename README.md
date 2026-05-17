@@ -51,8 +51,38 @@ pip install flightfinder
 # Or with MCP server support
 pip install flightfinder[mcp]
 
+# Or with HTTP MCP server support
+pip install flightfinder[mcp-http]
+
 # Or install all extras
 pip install flightfinder[all]
+```
+
+### MCP HTTP Server Security
+
+The HTTP MCP server binds to `127.0.0.1` by default and keeps DNS rebinding
+protection enabled. Local development does not require a token:
+
+```bash
+flightfinder-mcp-http
+```
+
+Remote or tunneled use must opt in with an API token plus explicit Host and
+Origin allowlists. Wildcard hosts and origins are rejected.
+
+```bash
+export FLIGHTFINDER_MCP_API_TOKEN="$(openssl rand -hex 32)"
+flightfinder-mcp-http \
+  --host 0.0.0.0 \
+  --allowed-host flightfinder.example.com \
+  --allowed-origin https://trusted-client.example.com
+```
+
+HTTP clients must send one of:
+
+```http
+Authorization: Bearer <token>
+X-FlightFinder-API-Token: <token>
 ```
 
 ### Development Installation

@@ -16,9 +16,10 @@ import os
 import sys
 import time
 import traceback
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, timedelta
-from functools import wraps
-from pathlib import Path
+from hmac import compare_digest
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,174 @@ def setup_debug_logging():
 
 # Default port for the HTTP server
 DEFAULT_PORT = 3001
+DEFAULT_HOST = "127.0.0.1"
+TOKEN_ENV_VARS = ("FLIGHTFINDER_MCP_API_TOKEN", "FLIGHTFINDER_MCP_API_KEY")
+
+LOCAL_BIND_HOSTS = {"127.0.0.1", "localhost", "::1"}
+DEFAULT_ALLOWED_HOSTS = [
+    "localhost",
+    "localhost:*",
+    "127.0.0.1",
+    "127.0.0.1:*",
+    "::1",
+    "[::1]",
+    "[::1]:*",
+]
+DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost",
+    "http://localhost:*",
+    "http://127.0.0.1",
+    "http://127.0.0.1:*",
+    "http://[::1]",
+    "http://[::1]:*",
+]
 
 # Track sessions for debugging
 _active_sessions: dict[str, dict] = {}
+
+
+@dataclass(frozen=True)
+class HTTPAccessSettings:
+    """Security settings applied to every HTTP route."""
+
+    host: str
+    allowed_hosts: tuple[str, ...]
+    allowed_origins: tuple[str, ...]
+    api_token: str | None = None
+
+    @property
+    def requires_token(self) -> bool:
+        return self.api_token is not None
+
+
+def _split_csv_values(values: Sequence[str] | None) -> list[str]:
+    if not values:
+        return []
+
+    result: list[str] = []
+    for value in values:
+        result.extend(item.strip() for item in value.split(",") if item.strip())
+    return result
+
+
+def _dedupe(values: Sequence[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return tuple(result)
+
+
+def _is_local_bind_host(host: str) -> bool:
+    return host.strip("[]").lower() in LOCAL_BIND_HOSTS
+
+
+def _contains_wildcard(values: Sequence[str]) -> bool:
+    return any(value.strip() == "*" for value in values)
+
+
+def _env_token() -> str | None:
+    for env_var in TOKEN_ENV_VARS:
+        token = os.environ.get(env_var)
+        if token:
+            return token
+    return None
+
+
+def build_http_access_settings(
+    host: str,
+    allowed_hosts: Sequence[str] | None = None,
+    allowed_origins: Sequence[str] | None = None,
+    api_token: str | None = None,
+) -> HTTPAccessSettings:
+    """Build conservative HTTP access settings for the MCP server.
+
+    Local development binds to loopback with local host/origin allowlists. Remote
+    binds are allowed only when the caller supplies a token and explicit
+    non-wildcard allowlists.
+    """
+
+    extra_hosts = _split_csv_values(allowed_hosts)
+    extra_origins = _split_csv_values(allowed_origins)
+    resolved_hosts = _dedupe([*DEFAULT_ALLOWED_HOSTS, *extra_hosts])
+    resolved_origins = _dedupe([*DEFAULT_ALLOWED_ORIGINS, *extra_origins])
+    resolved_token = api_token or _env_token()
+
+    if _contains_wildcard(resolved_hosts):
+        raise ValueError("MCP HTTP allowed hosts must be explicit; '*' is not allowed.")
+    if _contains_wildcard(resolved_origins):
+        raise ValueError("MCP HTTP allowed origins must be explicit; '*' is not allowed.")
+
+    if not _is_local_bind_host(host):
+        if not resolved_token:
+            env_names = " or ".join(TOKEN_ENV_VARS)
+            raise ValueError(f"Remote MCP HTTP binds require {env_names}.")
+        if not extra_hosts:
+            raise ValueError("Remote MCP HTTP binds require at least one --allowed-host value.")
+        if not extra_origins:
+            raise ValueError("Remote MCP HTTP binds require at least one --allowed-origin value.")
+
+    return HTTPAccessSettings(
+        host=host,
+        allowed_hosts=resolved_hosts,
+        allowed_origins=resolved_origins,
+        api_token=resolved_token,
+    )
+
+
+def _matches_allowlist(value: str | None, allowed: Sequence[str]) -> bool:
+    if not value:
+        return False
+
+    if value in allowed:
+        return True
+
+    return any(pattern.endswith(":*") and value.startswith(f"{pattern[:-2]}:") for pattern in allowed)
+
+
+def validate_host_header(host: str | None, settings: HTTPAccessSettings) -> bool:
+    return _matches_allowlist(host, settings.allowed_hosts)
+
+
+def validate_origin_header(origin: str | None, settings: HTTPAccessSettings) -> bool:
+    # Non-browser clients commonly omit Origin.
+    return origin is None or _matches_allowlist(origin, settings.allowed_origins)
+
+
+def validate_api_token(headers: Mapping[str, str], settings: HTTPAccessSettings) -> bool:
+    if settings.api_token is None:
+        return True
+
+    authorization = headers.get("authorization") or headers.get("Authorization")
+    if authorization and authorization.lower().startswith("bearer "):
+        return compare_digest(authorization[7:].strip(), settings.api_token)
+
+    api_token = headers.get("x-flightfinder-api-token") or headers.get("X-FlightFinder-API-Token")
+    return bool(api_token and compare_digest(api_token, settings.api_token))
+
+
+def create_http_access_middleware(settings: HTTPAccessSettings):
+    """Create Starlette middleware for host/origin allowlists and API tokens."""
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    class HTTPAccessControlMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            if not validate_host_header(request.headers.get("host"), settings):
+                return Response("Invalid Host header", status_code=421)
+
+            if not validate_origin_header(request.headers.get("origin"), settings):
+                return Response("Invalid Origin header", status_code=403)
+
+            if not validate_api_token(request.headers, settings):
+                return Response("Missing or invalid API token", status_code=401)
+
+            return await call_next(request)
+
+    return HTTPAccessControlMiddleware
 
 
 def log_request_details(method: str, path: str, headers: dict, body: bytes | None = None):
@@ -111,7 +277,7 @@ def create_debug_middleware(app):
     """Create Starlette middleware for request/response logging."""
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request
-    from starlette.responses import Response, StreamingResponse
+    from starlette.responses import StreamingResponse
 
     class DebugLoggingMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
@@ -235,7 +401,6 @@ def create_app():
     """Create the FastMCP HTTP application."""
     try:
         from mcp.server.fastmcp import FastMCP
-        from mcp.server.fastmcp.resources.types import FileResource
     except ImportError:
         print("MCP support requires the 'mcp' package.")
         print("Install with: pip install flightfinder[mcp-http]")
@@ -244,19 +409,6 @@ def create_app():
     from flightfinder.client import FlightFinder
     from flightfinder.hotel_client import HotelFinder
     from flightfinder.hotel_models import get_location_key
-
-    # UI Resources for MCP Apps
-    UI_DIR = Path(__file__).parent.parent.parent / "ui" / "mcp-apps"
-    MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
-
-    # Resource URI mapping: tool_name -> (html_file, resource_uri)
-    UI_RESOURCES = {
-        "search_flights": ("flights.html", "app://flightfinder/flights"),
-        "search_roundtrip": ("roundtrip.html", "app://flightfinder/roundtrip"),
-        "search_hotels": ("hotels.html", "app://flightfinder/hotels"),
-        "search_trip": ("trip.html", "app://flightfinder/trip"),
-        "find_location": ("locations.html", "app://flightfinder/locations"),
-    }
 
     # Create FastMCP server
     mcp = FastMCP("FlightFinder")
@@ -773,7 +925,29 @@ def main():
     import asyncio
 
     parser = argparse.ArgumentParser(description="FlightFinder MCP HTTP Server")
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("FLIGHTFINDER_MCP_HOST", DEFAULT_HOST),
+        help=f"Bind host (default: {DEFAULT_HOST}; set FLIGHTFINDER_MCP_HOST to override)",
+    )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port (default: {DEFAULT_PORT})")
+    parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        help="Allowed Host header. Repeat or comma-separate values. Required for non-local binds.",
+    )
+    parser.add_argument(
+        "--allowed-origin",
+        action="append",
+        default=[],
+        help="Allowed browser Origin. Repeat or comma-separate values. Required for non-local binds.",
+    )
+    parser.add_argument(
+        "--api-token",
+        default=None,
+        help="Bearer/API token for HTTP access. Prefer FLIGHTFINDER_MCP_API_TOKEN.",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
     args = parser.parse_args()
 
@@ -782,38 +956,73 @@ def main():
         DEBUG_MODE = True
         setup_debug_logging()
 
+    try:
+        access_settings = build_http_access_settings(
+            host=args.host,
+            allowed_hosts=args.allowed_host,
+            allowed_origins=args.allowed_origin,
+            api_token=args.api_token,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
     mcp = create_app()
 
-    # Configure for external access
-    mcp.settings.host = "0.0.0.0"
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    # Local-only by default. Remote binds must opt in with auth and explicit allowlists.
+    mcp.settings.host = args.host
     mcp.settings.port = args.port
-    # Allow external hosts (Fly.io proxy, cloudflared)
-    mcp.settings.transport_security.enable_dns_rebinding_protection = False
-    mcp.settings.transport_security.allowed_hosts = ["*"]
-    mcp.settings.transport_security.allowed_origins = ["*"]
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(access_settings.allowed_hosts),
+        allowed_origins=list(access_settings.allowed_origins),
+    )
+
+    starlette_app = mcp.streamable_http_app()
+    starlette_app.add_middleware(create_http_access_middleware(access_settings))
+    if DEBUG_MODE:
+        starlette_app.add_middleware(create_debug_middleware(starlette_app))
 
     print(f"\n{'=' * 60}")
-    print(f"FlightFinder MCP HTTP Server (FastMCP)")
+    print("FlightFinder MCP HTTP Server (FastMCP)")
     print(f"{'=' * 60}")
+    print(f"   Host: {args.host}")
     print(f"   Port: {args.port}")
     print(f"   Debug mode: {'ENABLED' if DEBUG_MODE else 'disabled'}")
-    print(f"   Transport: Streamable HTTP")
-    print(f"\nEndpoints:")
-    print(f"   Health:  http://localhost:{args.port}/health")
-    print(f"   MCP:     http://localhost:{args.port}/mcp")
+    print("   Transport: Streamable HTTP")
+    print("   DNS rebinding protection: ENABLED")
+    print(f"   API token required: {'yes' if access_settings.requires_token else 'no (loopback only)'}")
+    print(f"   Allowed hosts: {', '.join(access_settings.allowed_hosts)}")
+    print(f"   Allowed origins: {', '.join(access_settings.allowed_origins)}")
+    print("\nEndpoints:")
+    print(f"   Health:  http://{args.host}:{args.port}/health")
+    print(f"   MCP:     http://{args.host}:{args.port}/mcp")
     if DEBUG_MODE:
-        print(f"   Debug:   http://localhost:{args.port}/debug/info")
-    print(f"\nFor Claude Desktop (Fly.io):")
-    print(f"   https://flightfinder-mcp.fly.dev/mcp")
-    print(f"\nFor local testing with cloudflared:")
-    print(f"   npx cloudflared tunnel --url http://localhost:{args.port}")
+        print(f"   Debug:   http://{args.host}:{args.port}/debug/info")
+    print("\nFor remote/tunnel use:")
+    print("   FLIGHTFINDER_MCP_API_TOKEN=<token> \\")
+    print("     flightfinder-mcp-http --host 0.0.0.0 \\")
+    print("     --allowed-host <public-host> --allowed-origin <trusted-origin>")
     print(f"{'=' * 60}\n")
 
     if DEBUG_MODE:
         logger.info("Starting server with debug logging enabled...")
 
     # Run with Streamable HTTP transport
-    asyncio.run(mcp.run_streamable_http_async())
+    async def run_server():
+        import uvicorn
+
+        config = uvicorn.Config(
+            starlette_app,
+            host=mcp.settings.host,
+            port=mcp.settings.port,
+            log_level=mcp.settings.log_level.lower(),
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
+
+    asyncio.run(run_server())
 
 
 if __name__ == "__main__":
